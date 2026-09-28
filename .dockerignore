@@ -1,0 +1,36 @@
+# Send only inputs used by Dockerfile to the builder.
+**
+!Dockerfile
+!.dockerignore
+!build.gradle
+!settings.gradle
+!src/main/java/**/*.java
+!src/main/resources/application.yml
+
+# Block private directories even below otherwise allowed Java paths.
+**/.git/**
+**/.gradle/**
+**/build/**
+**/out/**
+**/target/**
+**/bin/**
+**/.idea/**
+**/.vscode/**
+**/.agents/**
+**/.codex/**
+**/node_modules/**
+**/.venv/**
+**/__pycache__/**
+**/.ssh/**
+**/.aws/**
+**/.azure/**
+**/.config/**
+**/.kube/**
+**/.gnupg/**
+**/secrets/**
+**/credentials/**
+**/certificates/**
+**/logs/**
+**/models/**
+**/data/**
+**/backups/**
