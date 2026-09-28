@@ -1,0 +1,17 @@
+edition = 3
+
+[agent]
+name = "event-driven-endpoint"
+version = "0.1.0"
+description = "MCP endpoint for the event-driven-llm application"
+readme = "The Java application handles requests through this endpoint."
+summary = "Local Kafka result endpoint"
+
+[agent.license]
+type = "spdx"
+expression = "MIT"
+
+[runtimes.executable]
+path = "/bin/sh"
+arguments = ["/opt/coral/capture.sh"]
+transport = "streamable_http"

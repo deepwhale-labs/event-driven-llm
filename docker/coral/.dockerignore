@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!.dockerignore
+!entrypoint.sh
+!healthcheck.sh
+!capture.sh
+!coral-agent.toml

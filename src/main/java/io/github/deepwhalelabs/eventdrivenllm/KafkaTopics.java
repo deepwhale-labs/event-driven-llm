@@ -30,6 +30,11 @@ public class KafkaTopics {
     }
 
     @Bean
+    NewTopic resultDeadLetterTopic(@Value("${app.kafka.result-topic}") String name) {
+        return TopicBuilder.name(name + ".DLT").partitions(2).replicas(1).build();
+    }
+
+    @Bean
     DefaultErrorHandler errorHandler(KafkaTemplate<String, String> kafkaTemplate) {
         var recoverer = new DeadLetterPublishingRecoverer(kafkaTemplate,
                 (record, exception) -> new TopicPartition(record.topic() + ".DLT", record.partition()));

@@ -1,0 +1,7 @@
+services:
+  app:
+    environment:
+      SPRING_AI_MODEL_CHAT: ollama
+    depends_on:
+      ollama:
+        condition: service_healthy

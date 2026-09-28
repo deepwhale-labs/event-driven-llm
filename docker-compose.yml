@@ -16,9 +16,9 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
-      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
-      - kafka_data:/tmp/kraft-combined-logs
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server broker:19092 >/dev/null 2>&1"]
       interval: 10s
@@ -26,6 +26,7 @@ services:
       retries: 12
 
   ollama:
+    profiles: ["llm"]
     image: ollama/ollama:latest
     ports:
       - "127.0.0.1:11434:11434"
@@ -37,21 +38,39 @@ services:
       timeout: 5s
       retries: 12
 
+  coral:
+    build: ./docker/coral
+    init: true
+    volumes:
+      - coral_runtime:/run/coral
+    healthcheck:
+      test: ["CMD", "/bin/sh", "/opt/coral/healthcheck.sh"]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 15s
+
   app:
     build: .
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${APP_PORT:-18080}:8080"
     environment:
       KAFKA_BOOTSTRAP_SERVERS: broker:19092
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:1b}
       APP_NODE_ID: local-worker-1
+      SPRING_AI_MODEL_CHAT: none
+      CORAL_BASE_URL: http://coral:5555
+      CORAL_RUNTIME_DIR: /run/coral
+    volumes:
+      - coral_runtime:/run/coral:ro
     depends_on:
       broker:
         condition: service_healthy
-      ollama:
+      coral:
         condition: service_healthy
 
 volumes:
   kafka_data:
   ollama_data:
+  coral_runtime:

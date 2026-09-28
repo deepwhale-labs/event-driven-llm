@@ -17,6 +17,14 @@
 !/Dockerfile
 !/docker-compose.yml
 !/docker-compose.gpu.yml
+!/docker-compose.ollama.yml
+!/docker/coral/Dockerfile
+!/docker/coral/.dockerignore
+!/docker/coral/entrypoint.sh
+!/docker/coral/healthcheck.sh
+!/docker/coral/capture.sh
+!/docker/coral/coral-agent.toml
+!/scripts/smoke.ps1
 !/gradle/wrapper/gradle-wrapper.jar
 !/gradle/wrapper/gradle-wrapper.properties
 

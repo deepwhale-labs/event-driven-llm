@@ -22,6 +22,8 @@ spring:
     listener:
       ack-mode: record
   ai:
+    model:
+      chat: ${SPRING_AI_MODEL_CHAT:none}
     ollama:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       chat:
@@ -30,6 +32,9 @@ spring:
 
 app:
   node-id: ${APP_NODE_ID:local-worker}
+  coral:
+    base-url: ${CORAL_BASE_URL:http://localhost:5555}
+    runtime-dir: ${CORAL_RUNTIME_DIR:./.coral-runtime}
   kafka:
     command-topic: llm-commands
     result-topic: llm-results
