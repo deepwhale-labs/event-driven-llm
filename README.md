@@ -1,46 +1,145 @@
 # event-driven-llm
 
-Kafka 명령을 로컬 Ollama 모델로 처리하고 결과를 Kafka 토픽에 기록하는 최소 실행 예제입니다. Spring Boot 앱이 개발용 명령 API와 워커를 함께 실행합니다. Coral 연동은 결과 토픽 뒤에 붙일 예정이며 현재 포함되어 있지 않습니다.
+**Kafka → 로컬 LLM → 결과 이벤트**
 
-## 구성
+## Architecture
 
-`POST /api/commands` → `llm-commands` → Spring Kafka 워커 → Ollama → `llm-results`
+```mermaid
+flowchart LR
+    Client[Client] -->|POST| API[Command API]
+    API --> Commands[(llm-commands)]
+    Commands --> Worker[LLM Worker]
+    Worker <-->|추론| Ollama[Ollama]
+    Worker -->|성공| Results[(llm-results)]
+    Worker -->|재시도 후 실패| DLT[(llm-commands.DLT)]
+    Results -. 연동 예정 .-> Coral[Coral]
 
-워커 실패 시 짧게 재시도한 뒤 원본 명령을 `llm-commands.DLT`에 보냅니다. 결과 메시지는 `taskId`, `nodeId`, `output`을 담습니다. 명령을 발행한 HTTP 응답은 작업 완료가 아닌 Kafka 접수만 뜻합니다.
+    classDef planned stroke-dasharray: 5 5
+    class Coral planned
+```
 
-## Docker Compose로 실행
+| 서비스 | 역할 / 스택 | 로컬 포트 |
+| --- | --- | --- |
+| `app` | Command API + Worker · Java 21 · Spring Boot 3.5 · Spring AI 1.1 | `8080` |
+| `broker` | 메시지 보관 · Kafka 4.3 · KRaft | `9092` |
+| `ollama` | 로컬 추론 · `llama3.2:1b` | `11434` |
 
-Docker Desktop 또는 Docker Engine과 Compose가 필요합니다. 첫 실행은 모델 다운로드가 필요합니다.
+## Quick start
+
+필수: **Docker + Compose**
 
 ```bash
-docker compose up -d broker ollama
+docker compose up -d --wait broker ollama
 docker compose exec ollama ollama pull llama3.2:1b
 docker compose up --build -d app
 ```
 
-NVIDIA GPU를 Docker에서 사용할 수 있는 호스트라면 위 명령의 `docker compose` 뒤에 `-f docker-compose.yml -f docker-compose.gpu.yml`을 붙여 GPU 설정을 적용할 수 있습니다.
+### 1. 명령 전송
 
-PowerShell에서 명령을 발행합니다.
+**PowerShell**
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/commands -ContentType 'application/json' -Body '{"prompt":"Kafka를 한 문장으로 설명해줘"}'
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8080/api/commands `
+  -ContentType 'application/json' `
+  -Body '{"prompt":"Explain Kafka in one sentence."}'
 ```
 
-결과와 실패 메시지는 각각 아래 명령으로 확인할 수 있습니다.
+**`202 Accepted` → `taskId` 반환 · Kafka 접수**
+
+<details>
+<summary>Bash / curl</summary>
+
+```bash
+curl -X POST http://localhost:8080/api/commands \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"Explain Kafka in one sentence."}'
+```
+
+</details>
+
+### 2. 결과 확인
 
 ```bash
 docker compose exec broker /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:19092 --topic llm-results --from-beginning
-docker compose exec broker /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:19092 --topic llm-commands.DLT --from-beginning
 ```
 
-`OLLAMA_MODEL` 환경 변수로 모델 이름을 바꿀 수 있으며, 해당 모델을 Ollama에 먼저 받아야 합니다. JDK 21이 있는 환경에서는 `./gradlew bootRun` 또는 Windows의 `./gradlew.bat bootRun`으로 앱만 실행할 수 있습니다. 이때 Kafka와 Ollama는 로컬 기본 포트에서 실행 중이어야 합니다.
+**결과 메시지 예시**
 
-## Git 및 Docker 포함 범위
+```json
+{
+  "taskId": "<요청 시 반환된 UUID>",
+  "nodeId": "local-worker-1",
+  "output": "<모델 응답>"
+}
+```
 
-`.gitignore`는 기본적으로 모든 파일을 제외하고 Java 소스, 공용 `application.yml`, Gradle Wrapper, 명시된 빌드·Compose 파일과 README만 허용합니다. 새 문서, 테스트 리소스, CI 설정 등을 추가하면 필요한 경로만 허용 목록에 추가하세요. 로컬 환경 설정, 비밀키·인증서, 로그, 덤프, 모델, 데이터, 빌드 결과는 제외합니다. `.dockerignore`도 빌드에 필요한 파일만 전달합니다.
+## Options
 
-공용 설정과 Java 소스에는 비밀값 대신 환경 변수 참조를 사용하세요. Ignore 규칙은 파일 내용의 비밀값이나 이미 Git이 추적하는 파일을 차단하지 않습니다. 커밋 전 `git diff --cached`로 실제 포함 내용을 확인하세요.
+<details>
+<summary>NVIDIA GPU</summary>
 
-## 범위와 다음 작업
+Quick start 이후, Docker GPU 사용이 설정된 호스트에서:
 
-Compose 설정은 단일 브로커와 평문 연결을 쓰는 로컬 개발용입니다. 운영 전에는 네트워크 경계, 인증과 암호화, Kafka 복제, 보관 기간을 결정해야 합니다. 워커는 메시지 하나씩 동기 처리하며 `max.poll.interval.ms`는 15분입니다. 이보다 긴 추론, 노드별 작업 라우팅, 결과 중복 제거와 Coral 멘션은 실제 업무 요구에 맞춰 설계해야 합니다. 특히 결과 토픽 발행 후 오프셋 확정 전에 워커가 종료되면 같은 `taskId`의 결과가 다시 발행될 수 있습니다.
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
+```
+
+</details>
+
+<details>
+<summary>로컬 개발 · JDK 21</summary>
+
+Quick start의 Kafka·Ollama를 사용합니다.
+
+```powershell
+docker compose stop app
+.\gradlew.bat bootRun
+```
+
+macOS / Linux: `./gradlew bootRun`
+
+</details>
+
+<details>
+<summary>실패 메시지 · 로그 · 종료</summary>
+
+```bash
+# 실패 메시지
+docker compose exec broker /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server broker:19092 --topic llm-commands.DLT --from-beginning
+
+# 앱 로그
+docker compose logs -f app
+
+# 종료 · 데이터 볼륨 유지
+docker compose down
+```
+
+</details>
+
+<details>
+<summary>설정 · 현재 범위 · 파일 정책</summary>
+
+| 항목 | 설정 |
+| --- | --- |
+| 모델 변경 | `OLLAMA_MODEL` 지정 + 해당 모델 사전 다운로드 |
+| 처리 방식 | 메시지 1건씩 · poll 간격 상한 15분 |
+| 개발 환경 | 단일 브로커 · 평문 연결 · localhost 포트 공개 |
+| 추후 구현 | Coral · 노드별 라우팅 · 결과 중복 제거 · 장시간 추론 제어 |
+| 운영 전 결정 | 네트워크 경계 · 인증·암호화 · Kafka 복제·보관 기간 |
+
+결과 발행 후 오프셋 확정 전에 종료되면 같은 `taskId`의 결과가 중복될 수 있습니다.
+
+| 파일 정책 | 대상 |
+| --- | --- |
+| Git 허용 | Java · 공용 설정 · Gradle·Docker 정의 · 저장소 설정 · README |
+| Git 제외 | `.env` · 키·인증서 · 로그·덤프 · 모델·데이터 · 빌드 결과 |
+| Docker 전달 | 빌드 정의 · main Java 소스 · 공용 설정 |
+
+새 경로는 [.gitignore](.gitignore) 허용 목록에 추가합니다. 비밀값은 환경 변수로 주입합니다. Ignore는 소스 내용이나 이미 추적 중인 파일을 검사하지 않습니다.
+
+```bash
+git diff --cached
+```
+
+</details>
