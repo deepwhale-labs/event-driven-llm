@@ -47,16 +47,13 @@ Invoke-RestMethod -Method Post `
 
 **`202 Accepted` → `taskId` 반환 · Kafka 접수**
 
-<details>
-<summary>Bash / curl</summary>
+**Bash / curl**
 
 ```bash
 curl -X POST http://localhost:8080/api/commands \
   -H 'Content-Type: application/json' \
   -d '{"prompt":"Explain Kafka in one sentence."}'
 ```
-
-</details>
 
 ### 2. 결과 확인
 
@@ -76,8 +73,7 @@ docker compose exec broker /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-
 
 ## Options
 
-<details>
-<summary>NVIDIA GPU</summary>
+### NVIDIA GPU
 
 Quick start 이후, Docker GPU 사용이 설정된 호스트에서:
 
@@ -85,10 +81,7 @@ Quick start 이후, Docker GPU 사용이 설정된 호스트에서:
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 ```
 
-</details>
-
-<details>
-<summary>로컬 개발 · JDK 21</summary>
+### 로컬 개발 · JDK 21
 
 Quick start의 Kafka·Ollama를 사용합니다.
 
@@ -99,10 +92,7 @@ docker compose stop app
 
 macOS / Linux: `./gradlew bootRun`
 
-</details>
-
-<details>
-<summary>실패 메시지 · 로그 · 종료</summary>
+### 실패 메시지 · 로그 · 종료
 
 ```bash
 # 실패 메시지
@@ -115,10 +105,7 @@ docker compose logs -f app
 docker compose down
 ```
 
-</details>
-
-<details>
-<summary>설정 · 현재 범위 · 파일 정책</summary>
+## 설정 · 현재 범위 · 파일 정책
 
 | 항목 | 설정 |
 | --- | --- |
@@ -141,5 +128,3 @@ docker compose down
 ```bash
 git diff --cached
 ```
-
-</details>
