@@ -20,13 +20,22 @@ repositories {
 dependencies {
     implementation platform('org.springframework.ai:spring-ai-bom:1.1.8')
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.kafka:spring-kafka'
     implementation 'org.springframework.ai:spring-ai-starter-model-ollama'
+    runtimeOnly 'org.postgresql:postgresql'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'com.h2database:h2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    if (providers.gradleProperty('verifyOllama').getOrElse('false').toBoolean()) {
+        systemProperty 'verify.ollama', 'true'
+        systemProperty 'verify.ollama.url', providers.gradleProperty('ollamaUrl').getOrElse('http://localhost:11434')
+        systemProperty 'verify.ollama.model', providers.gradleProperty('ollamaModel').getOrElse('llama3.2:1b')
+    }
 }

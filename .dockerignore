@@ -6,6 +6,10 @@
 !settings.gradle
 !src/main/java/**/*.java
 !src/main/resources/application.yml
+!src/main/resources/schema.sql
+!src/main/resources/static/index.html
+!src/main/resources/static/kafka-topology.js
+!src/main/resources/static/kafka-topology.css
 
 # Block private directories even below otherwise allowed Java paths.
 **/.git/**

@@ -14,20 +14,23 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 public class ResultController {
     private final CoralClient coral;
+    private final TaskStore tasks;
 
-    public ResultController(CoralClient coral) {
+    public ResultController(CoralClient coral, TaskStore tasks) {
         this.coral = coral;
+        this.tasks = tasks;
     }
 
     @GetMapping("/api/coral")
     public Map<String, String> status() {
-        return coral.status();
+        return tasks.withCoralLock(coral::status);
     }
 
     @GetMapping("/api/results/{taskId}")
     public CoralClient.Delivery result(@PathVariable UUID taskId) {
-        return coral.result(taskId).orElseThrow(() ->
-                new ResponseStatusException(HttpStatus.NOT_FOUND, "No result in the current Coral session"));
+        Task task = tasks.get(taskId.toString());
+        if (task.output() == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Result not available yet; query /api/tasks/{taskId}");
+        return new CoralClient.Delivery(task.taskId(), task.threadId(), task.nodeId(), task.output());
     }
 
     @ExceptionHandler(CoralException.class)

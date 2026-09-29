@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>작업실 · Event-driven LLM</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,sans-serif;color:#192927;background:#f1f4ef;line-height:1.5}
+    *{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:0 auto;padding:40px 24px}
+    header{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:32px}
+    h1{font-size:32px;letter-spacing:-1px;margin:0}h2{font-size:18px;margin:0 0 16px}p{color:#566560}
+    .tag{font-size:12px;letter-spacing:2px;color:#486d5e}.grid{display:grid;grid-template-columns:1fr 1.15fr;gap:24px}
+    .panel{background:#fff;border:1px solid #d7e0d8;border-radius:16px;padding:24px}.wide{grid-column:1/-1}
+    label{display:block;font-size:13px;font-weight:650;margin-bottom:8px}textarea,input,select{font:inherit;border:1px solid #bccbc0;border-radius:8px;background:white;padding:10px;width:100%;color:inherit}
+    textarea{resize:vertical;min-height:180px}button{font:inherit;border:0;border-radius:8px;padding:10px 16px;background:#235844;color:white;cursor:pointer}
+    button:disabled{opacity:.55;cursor:wait}button.secondary{background:#e9eee9;color:#244f3e}.row{display:flex;align-items:center;gap:12px;margin-top:16px}.row select{flex:1}
+    #notice{min-height:24px;margin-bottom:16px;color:#235844}#notice.error{color:#a32a25}
+    pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}.muted{color:#65716b;font-size:13px}
+    .task{display:block;width:100%;text-align:left;background:#fff;color:inherit;border:1px solid #d7e0d8;margin-top:10px;padding:14px}
+    .task:hover,.task[aria-pressed=true]{border-color:#235844;background:#f3f7f0}.task small{display:block;margin-top:6px;color:#5a6961}
+    .badge{display:inline-block;font-size:12px;border-radius:20px;background:#e9eee9;padding:3px 9px;margin-right:8px}.FAILED{background:#fde9e6;color:#9e2b24}.SUCCEEDED{background:#e3f2e6;color:#256043}
+    #detail{min-height:215px}#result{margin-top:16px;padding-top:16px;border-top:1px solid #e1e7e0;max-height:460px;overflow:auto}
+    .access{width:240px}#filter{max-width:160px}.listhead{display:flex;justify-content:space-between;align-items:center;gap:12px}.listhead h2{margin:0}
+    [hidden]{display:none!important}.tabs{display:flex;gap:6px;border-bottom:1px solid #d7e0d8;margin-bottom:24px;padding-bottom:10px}.tab{background:transparent;color:#596860}.tab[aria-selected=true]{background:#235844;color:white}
+    @media(max-width:720px){main{padding:24px 16px}.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.access{width:100%}.panel{padding:18px}}
+  </style>
+  <link rel="stylesheet" href="/kafka-topology.css">
+</head>
+<body>
+<main>
+  <header><div><div class="tag">EVENT-DRIVEN LLM</div><h1>작업실</h1><p>작업을 요청하고 진행 상황과 결과를 확인하세요.</p></div>
+    <div class="access"><label for="apiKey">접근 키 <span class="muted">설정된 경우</span></label><input id="apiKey" type="password" autocomplete="off" placeholder="API 키 입력"><button class="secondary" id="connect" style="margin-top:8px">연결</button></div></header>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <nav class="tabs" role="tablist" aria-label="화면 선택"><button id="workTab" class="tab" role="tab" aria-controls="workPanel" aria-selected="true">작업실</button><button id="kafkaTab" class="tab" role="tab" aria-controls="kafkaPanel" aria-selected="false" tabindex="-1">Kafka 구성</button></nav>
+  <div class="grid" id="workPanel" role="tabpanel" aria-labelledby="workTab">
+    <section class="panel"><h2>새 작업</h2><form id="requestForm"><label for="prompt">요청 내용</label><textarea id="prompt" required maxlength="32000" placeholder="예: 아래 글의 핵심 내용을 세 문장으로 정리해 주세요."></textarea>
+      <div class="row"><label for="node" style="margin:0">처리 노드</label><select id="node"><option value="">자동 배정</option></select><button id="submit" type="submit">작업 요청</button></div></form></section>
+    <section class="panel"><h2>작업 결과</h2><div id="detail"><p class="muted">목록에서 작업을 선택하세요.</p></div></section>
+    <section class="panel wide"><div class="listhead"><h2>최근 작업</h2><select id="filter" aria-label="작업 상태 필터"><option value="">전체 상태</option><option value="QUEUED">대기</option><option value="RUNNING">처리 중</option><option value="DELIVERING">전달 중</option><option value="SUCCEEDED">완료</option><option value="FAILED">실패</option></select></div><div id="tasks"><p class="muted">작업을 불러오는 중입니다.</p></div></section>
+  </div>
+  <section id="kafkaPanel" role="tabpanel" aria-labelledby="kafkaTab" hidden>
+    <div class="topology-header"><div><div class="tag">KAFKA TOPOLOGY</div><h2>메시지가 흐르는 길</h2><p class="muted">토픽과 Consumer의 증감·할당 변화가 연결도에 자동 반영됩니다.</p></div><button id="refreshTopology" class="secondary">새로고침</button></div>
+    <div class="topology-status" role="status" aria-live="polite"><span id="kafkaConnection">구성 조회 중…</span><span id="kafkaUpdated" class="muted">10초마다 자동 갱신</span></div>
+    <div id="kafkaStats" class="stats"></div>
+    <div class="panel" id="graphPanel">
+      <div class="listhead"><h2>실시간 연결도</h2><span class="muted" id="graphCount"></span></div>
+      <div id="brokerBand" class="broker-band"></div>
+      <div class="graph-toolbar"><input id="graphSearch" type="search" placeholder="토픽 · 그룹 · Consumer 검색" aria-label="연결도 검색"><label class="graph-toggle"><input id="showConfigured" type="checkbox" checked>앱 발행·실패 경로</label><div class="zoom-controls"><button class="secondary" id="zoomOut" aria-label="축소">−</button><output id="graphZoom">100%</output><button class="secondary" id="zoomIn" aria-label="확대">+</button><button class="secondary" id="zoomFit">맞춤</button></div></div>
+      <div class="graph-legend"><span><i class="legend-line"></i>현재 파티션 할당</span><span><i class="legend-line configured"></i>앱 설정의 발행·실패 경로</span><span>큰 테두리: Consumer 그룹</span></div>
+      <div id="graphViewport" class="graph-viewport" tabindex="0" role="region" aria-label="Kafka 동적 연결도. 스크롤로 이동하고 노드를 선택해 상세 정보를 확인하세요."><div id="graphSizer" class="graph-sizer"><div id="graphCanvas" class="graph-canvas"></div></div></div>
+      <p class="graph-hint">노드를 누르면 연결 관계를 강조합니다. 확대 후 스크롤로 이동할 수 있습니다.</p>
+      <p id="graphChanges" class="graph-changes" role="status" aria-live="polite"></p>
+      <div id="graphDetail" class="graph-detail"></div>
+      <p id="kafkaNote" class="topology-note">내부 관리 토픽은 제외합니다. 실선은 현재 할당이며 실제 메시지 이동을 뜻하지 않습니다. 커밋 이력만 있는 그룹은 활성 연결선 없이 표시합니다.</p>
+    </div>
+    <div class="panel config-panel"><h2>Consumer 그룹</h2><div id="kafkaGroups" class="groups"></div></div>
+    <div class="panel config-panel"><div class="listhead"><h2>토픽과 파티션</h2><span class="muted">조회 가능한 일반 토픽</span></div><div id="topicPicker" class="topic-picker"></div><div id="topicDetail" class="topic-detail" tabindex="-1"></div></div>
+  </section>
+</main>
+<script>
+  const $=id=>document.getElementById(id);
+  const names={QUEUED:'대기',RUNNING:'처리 중',DELIVERING:'결과 전달 중',SUCCEEDED:'완료',FAILED:'실패'};
+  let selected=null,busy=false;
+  function notice(message,error=false){$('notice').textContent=message;$('notice').className=error?'error':'';}
+  async function api(path,options={}){
+    const headers={'Content-Type':'application/json',...options.headers};
+    if($('apiKey').value)headers['X-API-Key']=$('apiKey').value;
+    const response=await fetch(path,{...options,headers});
+    if(!response.ok){throw new Error(response.status===401?'접근 키를 확인해 주세요.':response.status===409?'현재 상태에서는 재시도할 수 없습니다.':`요청을 처리하지 못했습니다 (${response.status}).`);}
+    return response.json();
+  }
+  function element(tag,text,cls){const el=document.createElement(tag);el.textContent=text;if(cls)el.className=cls;return el;}
+  function show(task){
+    const box=$('detail');box.replaceChildren();
+    box.append(element('span',names[task.status]||task.status,'badge '+task.status),element('span',`시도 ${task.attempt} · ${task.nodeId||'배정 대기'}`,'muted'));
+    box.append(element('p',task.prompt),element('small',task.taskId,'muted'));
+    if(task.lastError)box.append(element('p',task.failureStage==='DELIVERY'?'결과 전달에 실패했습니다. 재시도 시 저장된 결과를 다시 전달합니다.':'처리에 실패했습니다. 설정을 확인한 뒤 다시 시도하세요.'));
+    if(task.output!==null){const out=element('pre',task.output);out.id='result';box.append(out);}
+    if(task.status==='FAILED'){
+      const retry=element('button','다시 시도');retry.className='row';retry.onclick=async()=>{retry.disabled=true;try{await api(`/api/tasks/${task.taskId}/retry`,{method:'POST'});notice('재시도를 요청했습니다.');await refresh();}catch(e){notice(e.message,true);retry.disabled=false;}};box.append(retry);
+    }
+  }
+  async function refresh(){
+    if(busy)return;busy=true;
+    try{
+      const tasks=await api('/api/tasks?limit=30'+($('filter').value?'&status='+$('filter').value:''));
+      const list=$('tasks');list.replaceChildren();
+      if(!tasks.length)list.append(element('p','표시할 작업이 없습니다.','muted'));
+      for(const task of tasks){
+        const button=element('button','', 'task');button.setAttribute('aria-pressed',String(task.taskId===selected));
+        button.append(element('span',names[task.status]||task.status,'badge '+task.status),element('span',task.prompt.slice(0,90)),element('small',`${new Date(task.createdAt).toLocaleString()} · ${task.targetNode||'자동 배정'}`));
+        button.onclick=()=>{selected=task.taskId;show(task);refresh();};list.append(button);
+      }
+      if(selected)show(await api('/api/tasks/'+selected));
+    }catch(e){notice(e.message,true);}finally{busy=false;}
+  }
+  async function connect(){try{const nodes=await api('/api/nodes');const select=$('node');select.replaceChildren(new Option('자동 배정',''));nodes.forEach(n=>select.add(new Option(n,n)));notice('연결되었습니다.');await refresh();if(!$('kafkaPanel').hidden)await refreshKafka();}catch(e){notice(e.message,true);}}
+  $('requestForm').onsubmit=async event=>{event.preventDefault();if(!$('prompt').value.trim())return;const submit=$('submit');submit.disabled=true;try{const task=await api('/api/commands',{method:'POST',body:JSON.stringify({prompt:$('prompt').value,targetNode:$('node').value||null})});selected=task.taskId;notice('작업을 접수했습니다.');await refresh();}catch(e){notice(e.message,true);}finally{submit.disabled=false;}};
+  $('connect').onclick=connect;$('filter').onchange=refresh;
+</script>
+<script src="/kafka-topology.js"></script>
+</body>
+</html>

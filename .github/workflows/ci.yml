@@ -1,0 +1,27 @@
+name: Verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - run: bash gradlew test bootJar --no-daemon
+      - run: docker compose up --build -d
+      - name: End-to-end verification
+        shell: pwsh
+        run: ./scripts/smoke.ps1
+      - name: Recovery verification
+        shell: pwsh
+        run: ./scripts/recovery.ps1
+      - if: failure()
+        run: docker compose logs --tail=100
+      - if: always()
+        run: docker compose down

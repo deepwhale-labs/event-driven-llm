@@ -2,6 +2,17 @@ server:
   port: ${SERVER_PORT:8080}
 
 spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/eventdriven}
+    username: ${DATABASE_USER:eventdriven}
+    password: ${DATABASE_PASSWORD:local-development-only}
+  sql:
+    init:
+      mode: always
+  task:
+    scheduling:
+      pool:
+        size: 2
   application:
     name: event-driven-llm
   kafka:
@@ -31,10 +42,31 @@ spring:
           model: ${OLLAMA_MODEL:llama3.2:1b}
 
 app:
-  node-id: ${APP_NODE_ID:local-worker}
+  node-id: ${APP_NODE_ID:local-worker-1}
+  worker-nodes: ${WORKER_NODES:local-worker-1}
+  worker-enabled: ${WORKER_ENABLED:true}
+  api-key: ${APP_API_KEY:}
+  processing-lease-ms: ${PROCESSING_LEASE_MS:1200000}
+  auto-retry:
+    max-retries: ${AUTO_RETRY_MAX:2}
+    delay-ms: ${AUTO_RETRY_DELAY_MS:60000}
   coral:
     base-url: ${CORAL_BASE_URL:http://localhost:5555}
     runtime-dir: ${CORAL_RUNTIME_DIR:./.coral-runtime}
   kafka:
     command-topic: llm-commands
     result-topic: llm-results
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db

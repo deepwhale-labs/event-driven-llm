@@ -42,13 +42,13 @@ public class CoralClient {
         return thread == null ? Optional.empty() : readDelivery(thread, taskId.toString());
     }
 
-    // One notifier instance per local deployment. This is not a distributed exactly-once guarantee.
-    public synchronized void deliver(LlmResult result) {
+    // TaskStore serializes application instances with a database lock; remote sends remain at-least-once.
+    public synchronized Delivery deliver(LlmResult result) {
         String taskId = UUID.fromString(result.taskId()).toString();
         try {
             JsonNode thread = findThread(state(), taskId);
             if (thread != null && readDelivery(thread, taskId).isPresent()) {
-                return;
+                return readDelivery(thread, taskId).orElseThrow();
             }
             String threadId;
             if (thread == null) {
@@ -63,6 +63,7 @@ public class CoralClient {
             }
             notifier.tool("coral_send_message", Map.of("threadId", threadId,
                     "content", mapper.writeValueAsString(result), "mentions", List.of("observer")));
+            return new Delivery(taskId, threadId, result.nodeId(), result.output());
         } catch (CoralException ex) {
             notifier = null; // Reinitialize MCP on retry; discover the existing thread before sending again.
             throw ex;

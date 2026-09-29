@@ -8,19 +8,22 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class CoralResultConsumer {
+    public static final String GROUP_ID = "coral-notifier";
     private static final Logger log = LoggerFactory.getLogger(CoralResultConsumer.class);
     private final CoralClient coral;
     private final ObjectMapper mapper;
+    private final TaskStore tasks;
 
-    public CoralResultConsumer(CoralClient coral, ObjectMapper mapper) {
+    public CoralResultConsumer(CoralClient coral, ObjectMapper mapper, TaskStore tasks) {
         this.coral = coral;
         this.mapper = mapper;
+        this.tasks = tasks;
     }
 
-    @KafkaListener(topics = "${app.kafka.result-topic}", groupId = "coral-notifier")
+    @KafkaListener(topics = "${app.kafka.result-topic}", groupId = GROUP_ID)
     public void consume(String payload) throws Exception {
         LlmResult result = mapper.readValue(payload, LlmResult.class);
-        coral.deliver(result);
+        tasks.deliver(result, coral);
         log.info("Delivered task {} to Coral", result.taskId());
     }
 }

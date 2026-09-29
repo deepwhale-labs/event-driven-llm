@@ -8,6 +8,7 @@
 !/.dockerignore
 !/.gitattributes
 !/README.md
+!/README.en.md
 
 # Build and container definitions.
 !/build.gradle
@@ -25,6 +26,8 @@
 !/docker/coral/capture.sh
 !/docker/coral/coral-agent.toml
 !/scripts/smoke.ps1
+!/scripts/recovery.ps1
+!/.github/workflows/ci.yml
 !/gradle/wrapper/gradle-wrapper.jar
 !/gradle/wrapper/gradle-wrapper.properties
 
@@ -32,6 +35,10 @@
 !/src/main/java/**/*.java
 !/src/test/java/**/*.java
 !/src/main/resources/application.yml
+!/src/main/resources/schema.sql
+!/src/main/resources/static/index.html
+!/src/main/resources/static/kafka-topology.js
+!/src/main/resources/static/kafka-topology.css
 
 # Keep private directories excluded even inside an allowed source tree.
 .git/
@@ -101,3 +108,6 @@ hs_err_pid*
 *.tmp
 *.swp
 *~
+
+# The shared schema is source code, not a database export.
+!/src/main/resources/schema.sql
