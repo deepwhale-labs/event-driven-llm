@@ -40,6 +40,7 @@ spring:
       chat:
         options:
           model: ${OLLAMA_MODEL:llama3.2:1b}
+          num-predict: ${OLLAMA_NUM_PREDICT:512}
 
 app:
   node-id: ${APP_NODE_ID:local-worker-1}

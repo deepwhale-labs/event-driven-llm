@@ -31,6 +31,7 @@ Kafka buffers incoming work for workers to process. Multiple workers and partiti
 | Capability | Implemented behavior |
 | --- | --- |
 | Durable submission | PostgreSQL job records and transactional outbox |
+| Batch submission and timing | Atomic submission of up to 50 prompts, batch progress, per-job queue/inference/total time |
 | Status and results | Web and API queries; results survive app restarts |
 | Recovery | Stage-aware manual/automatic retries, expired processing lease recovery, stale attempt fencing |
 | Worker routing | Automatic assignment or a registered target worker |
@@ -38,7 +39,7 @@ Kafka buffers incoming work for workers to process. Multiple workers and partiti
 | Inference | DEMO by default; optional real Ollama inference |
 | Access and verification | Optional API key, metrics, unit/database/live-service checks |
 
-The current input flow accepts **one prompt per request**. Bulk file submission, automatic business-data ingestion, cancellation, and per-user accounts are not implemented. The web interface is currently in Korean; this README provides English setup and development instructions.
+The input flow supports **single prompts or batches of up to 50 prompts**. File uploads, automatic business-data ingestion, cancellation, and per-user accounts are not implemented. The web interface is currently in Korean; this README provides English setup and development instructions.
 
 ## Run locally
 
@@ -50,6 +51,10 @@ docker compose up --build -d
 ```
 
 **Workbench: http://localhost:18080** — submit prompts, select a worker, inspect status/results, and retry failed jobs.
+
+The form shows the configured DEMO/real-model mode and model name. Choose **여러 건 한 번에** (batch mode) and separate prompts with a line containing `---`. **예시 10개 채우기** fills ten sample prompts without submitting them. Each prompt is limited to 32,000 characters, with a total of 256,000 characters per batch. Validation or persistence failures reject the whole batch.
+
+Reopen a batch using its dedicated link or the recent-batch selector. The view shows success/failure/pending counts, progress, elapsed time, and average inference time. Per-job **queue/inference durations refer to the latest inference attempt**; **total elapsed time includes retries and delivery from the initial submission**. Delivery-only retries retain the original inference timings. Unmeasured timings in older records are shown as `—`.
 
 **Kafka graph: http://localhost:18080/#kafka** — automatically discovers accessible non-internal topics and consumer groups. Nodes change as topics, groups, and individual consumers appear or disappear. Edges change when partitions are reassigned. The visible tab refreshes every 10 seconds; server-side snapshots are shared for 5 seconds.
 
@@ -82,9 +87,22 @@ Invoke-RestMethod "http://localhost:18080/api/results/$($task.taskId)"
 
 Omit `targetNode`, or set it to `null`, for automatic assignment. Prompts must contain 1–32,000 characters. Unregistered target nodes return `400`. Summarization, classification, and other tasks currently use the same free-form prompt workflow.
 
+Batch jobs use the same routing and retries. All jobs and outbox records in a batch are saved in one database transaction. Completion order may differ from input order.
+
+```powershell
+$body = @{ prompts = @('Reply briefly with hello.', 'What is 2 plus 3? Answer briefly.'); targetNode = $null } | ConvertTo-Json
+$batch = Invoke-RestMethod -Method Post -Uri http://localhost:18080/api/commands/batch `
+  -ContentType 'application/json' -Body $body
+Invoke-RestMethod "http://localhost:18080/api/batches/$($batch.summary.batchId)"
+```
+
 | Endpoint | Behavior |
 | --- | --- |
 | `POST /api/commands` | `202`; atomically saves the job and outbox record, returns `taskId` |
+| `POST /api/commands/batch` | `202`; `prompts` array of 1–50 items and optional `targetNode`; returns batch summary and jobs |
+| `GET /api/batches?limit=10` | Recent batch summaries, up to 50 |
+| `GET /api/batches/{batchId}` | Batch summary, all jobs, results, and recorded timestamps |
+| `GET /api/runtime` | Configured inference mode/model, output token cap, and batch input limits |
 | `GET /api/tasks?status=FAILED&limit=30` | Recent jobs, optional status filter, up to 100 records |
 | `GET /api/tasks/{taskId}` | Status, attempt, executing node, output, and failure stage |
 | `GET /api/results/{taskId}` | Saved inference result; `404` before output exists or for an unknown job |
@@ -129,6 +147,8 @@ docker compose --profile llm stop ollama
 
 When changing `OLLAMA_MODEL`, pull the matching model name. A failure in real-model mode is not replaced with a DEMO response.
 
+If an existing Ollama process uses port `11434`, set `OLLAMA_PORT=11435` in a local `.env` file to change the container's host port. The app still connects to `ollama:11434` inside Docker. A small model such as `OLLAMA_MODEL=qwen2.5:1.5b` can verify the workflow on a CPU; evaluate output quality before using it for business tasks. `OLLAMA_NUM_PREDICT` caps output tokens and defaults to 512, so longer responses can be truncated. The local `.env` file is excluded from Git.
+
 ## Worker routing and scaling
 
 Configure the same allowed node list on every app, for example `WORKER_NODES=local-worker-1,local-worker-2`, and give each instance a distinct `APP_NODE_ID`. Instances must share PostgreSQL, Kafka, and the Coral runtime volume. Give additional instances separate host app ports.
@@ -142,6 +162,8 @@ Topics created by the app default to two partitions and one replica. Within a co
 | Environment variable | Default / purpose |
 | --- | --- |
 | `APP_PORT` / `KAFKA_PORT` | `18080` / `9092`, bound to localhost |
+| `OLLAMA_PORT` | `11434`, host port of the optional Ollama container |
+| `OLLAMA_MODEL` / `OLLAMA_NUM_PREDICT` | `llama3.2:1b` / `512`, model name / output token cap |
 | `APP_API_KEY` | Empty for local unauthenticated access; otherwise APIs/metrics require `X-API-Key` |
 | `DATABASE_PASSWORD` | Local development default, shared by Compose database/app |
 | `DATABASE_URL` / `DATABASE_USER` | Database connection when running outside Docker |
@@ -182,7 +204,7 @@ Remove-Item Env:VERIFY_KAFKA
 
 On Linux/macOS, use `./gradlew` (or `bash gradlew`) for Gradle commands and PowerShell for the `.ps1` scripts.
 
-Unit/database tests use H2 in PostgreSQL compatibility mode to exercise transactions, concurrent claims, duplicate protection, retry limits, stale results, and API authentication. Integration scripts use real PostgreSQL, Kafka, and Coral. GitHub Actions runs tests, builds the app, and runs both integration scripts.
+Unit/database tests use H2 in PostgreSQL compatibility mode to exercise transactions, whole-batch rollback, additive schema migration, timing/retry preservation, concurrent claims, duplicate protection, retry limits, stale results, and API authentication. Integration scripts use real PostgreSQL, Kafka, and Coral. GitHub Actions runs tests, builds the app, and runs both integration scripts.
 
 `KafkaTopologyLiveTest` and `RealInferenceTest` are opt-in tests skipped by default. The Kafka test verifies topic creation, consumer counts of 1→2→1→0, partition reassignment, and topic/group deletion through the running API. It removes its temporary resources when it finishes. Set `KAFKA_TEST_BASE_URL` and `KAFKA_TEST_BOOTSTRAP` for other local addresses.
 
@@ -197,7 +219,7 @@ docker compose --profile llm down
 ## Next steps
 
 * Select an Ollama model for the intended workload and measure output quality and latency.
-* Add bulk prompt/file submission and result export.
+* Add file uploads for batch submission and result export.
 * Load-test multiple workers and improve queue-time, throughput, and failure diagnostics.
 * Add job search, pagination, and queued-job cancellation.
 * Integrate the required customer inquiry, review, or other business-data sources.

@@ -32,6 +32,18 @@ foreach ($target in @($null, $nodes[0])) {
 }
 $metrics = Invoke-RestMethod "$BaseUrl/actuator/metrics/llm.tasks" -Headers $headers
 if ($metrics.name -ne 'llm.tasks') { throw 'Task metrics unavailable.' }
+$body = @{ prompts = @('Reply briefly with hello.', 'What is 2 plus 3? Answer briefly.'); targetNode = $null } | ConvertTo-Json
+$batch = Invoke-RestMethod -Method Post "$BaseUrl/api/commands/batch" -Headers $headers -ContentType 'application/json' -Body $body
+if ($batch.summary.total -ne 2) { throw 'Batch was not accepted atomically.' }
+$finished = Wait-Json "$BaseUrl/api/batches/$($batch.summary.batchId)" { param($value) $value.summary.succeeded -eq 2 }
+foreach ($task in $finished.tasks) {
+    if ($task.batchId -ne $batch.summary.batchId -or !$task.output -or !$task.threadId) { throw 'Batch result incomplete.' }
+    if ($null -eq $task.queuedAt -or $null -eq $task.startedAt -or $null -eq $task.inferenceCompletedAt -or $null -eq $task.finishedAt) { throw 'Missing task timings.' }
+    if ($task.startedAt -lt $task.queuedAt -or $task.inferenceCompletedAt -lt $task.startedAt -or $task.finishedAt -lt $task.inferenceCompletedAt) { throw 'Task timings out of order.' }
+    if ($RequireModel -and $task.output.StartsWith('[DEMO')) { throw 'Expected real batch inference.' }
+}
+$runtime = Invoke-RestMethod "$BaseUrl/api/runtime" -Headers $headers
+if ($RequireModel -and $runtime.mode -ne 'OLLAMA') { throw 'Runtime is not configured for real inference.' }
 $topology = Invoke-RestMethod "$BaseUrl/api/kafka/topology" -Headers $headers
 if ($topology.status -ne 'CONNECTED' -or $topology.brokers.Count -lt 1 -or $topology.topics.Count -lt 4) { throw 'Kafka topology unavailable.' }
-Write-Output 'PASS: durable API -> Kafka -> worker -> saved result -> Coral; node routing; metrics; Kafka topology'
+Write-Output 'PASS: durable API -> Kafka -> worker -> saved result -> Coral; node routing; atomic batch; timings; runtime; metrics; Kafka topology'

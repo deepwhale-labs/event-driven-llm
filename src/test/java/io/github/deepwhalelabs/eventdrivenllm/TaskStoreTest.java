@@ -204,4 +204,88 @@ class TaskStoreTest {
         jobs.publishBatch();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox", Integer.class)).isZero();
     }
+
+    @Test
+    void batchPersistsAllTasksAndOutboxWithAnIndependentSummary() {
+        var batch = store.createBatch(java.util.List.of("first", "second", "third"), "one");
+        store.create("separate", null);
+        assertThat(batch.summary().total()).isEqualTo(3);
+        assertThat(batch.tasks()).allMatch(t -> t.batchId().equals(batch.summary().batchId()) && t.queuedAt() != null);
+        assertThat(batch.tasks()).extracting(Task::prompt).containsExactlyInAnyOrder("first", "second", "third");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox WHERE topic='commands.one'", Integer.class)).isEqualTo(3);
+        var completed = infer(batch.tasks().getFirst());
+        var coral = mock(CoralClient.class);
+        when(coral.deliver(any())).thenReturn(new CoralClient.Delivery(completed.taskId(), "thread", "one", completed.output()));
+        store.deliver(result(completed), coral);
+        store.fail(batch.tasks().get(1).taskId(), 1, "COMMAND");
+        var saved = newStore().batch(batch.summary().batchId());
+        assertThat(saved.summary()).isEqualTo(new TaskStore.BatchSummary(batch.summary().batchId(), batch.summary().createdAt(), 3, 1, 1));
+        assertThat(newStore().batches(10)).containsExactly(saved.summary());
+        assertThatThrownBy(() -> store.batch(UUID.randomUUID().toString())).isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void aFailureHalfwayThroughABatchRollsBackEveryTaskAndOutboxEntry() throws Exception {
+        var brokenMapper = spy(new ObjectMapper());
+        when(brokenMapper.writeValueAsString(any())).thenCallRealMethod()
+                .thenThrow(new com.fasterxml.jackson.core.JsonProcessingException("second event fails") { });
+        var broken = new TaskStore(jdbc, transactions, brokenMapper, routing, 1200000);
+        assertThatThrownBy(() -> broken.createBatch(java.util.List.of("first", "second", "third"), null)).isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM tasks", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM outbox", Integer.class)).isZero();
+        assertThatThrownBy(() -> store.createBatch(java.util.List.of("first", "second"), "missing")).isInstanceOf(IllegalArgumentException.class);
+        assertThat(store.batches(10)).isEmpty();
+    }
+
+    @Test
+    void timingsSurviveDeliveryRetryAndAreResetForANewInference() {
+        Task created = store.create("timing", null);
+        assertThat(created.queuedAt()).isEqualTo(created.createdAt());
+        assertThat(created.startedAt()).isNull();
+        var generated = infer(created);
+        assertThat(generated.startedAt()).isGreaterThanOrEqualTo(generated.queuedAt());
+        assertThat(generated.inferenceCompletedAt()).isGreaterThanOrEqualTo(generated.startedAt());
+        assertThat(generated.finishedAt()).isNull();
+        store.fail(created.taskId(), 1, "DELIVERY");
+        assertThat(store.get(created.taskId()).finishedAt()).isNotNull();
+        var retried = store.retry(created.taskId());
+        assertThat(retried.finishedAt()).isNull();
+        assertThat(retried.startedAt()).isEqualTo(generated.startedAt());
+        assertThat(retried.inferenceCompletedAt()).isEqualTo(generated.inferenceCompletedAt());
+        var coral = mock(CoralClient.class);
+        when(coral.deliver(any())).thenReturn(new CoralClient.Delivery(created.taskId(), "thread", "one", generated.output()));
+        store.deliver(result(retried), coral);
+        assertThat(store.get(created.taskId()).finishedAt()).isGreaterThanOrEqualTo(generated.inferenceCompletedAt());
+        var failed = store.create("failed", null);
+        String token = store.claim(command(failed), "one").orElseThrow();
+        store.release(command(failed), token);
+        store.fail(failed.taskId(), 1, "COMMAND");
+        var again = store.retry(failed.taskId());
+        assertThat(again.startedAt()).isNull();
+        assertThat(again.inferenceCompletedAt()).isNull();
+        assertThat(again.finishedAt()).isNull();
+        store.complete(command(failed), token, "one", "late");
+        assertThat(store.get(failed.taskId()).inferenceCompletedAt()).isNull();
+    }
+
+    @Test
+    void additiveMigrationPreservesExistingRowsAndLeavesUnmeasuredTimesUnknown() {
+        var source = new DriverManagerDataSource("jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=PostgreSQL;DB_CLOSE_DELAY=-1", "sa", "");
+        var old = new JdbcTemplate(source);
+        old.execute("CREATE TABLE tasks(task_id VARCHAR(36) PRIMARY KEY,prompt TEXT NOT NULL,target_node VARCHAR(64),status VARCHAR(24) NOT NULL,"
+                + "attempt INTEGER NOT NULL DEFAULT 1,node_id VARCHAR(64),output TEXT,thread_id VARCHAR(36),failure_stage VARCHAR(16),last_error VARCHAR(160),"
+                + "claim_token VARCHAR(36),lease_until BIGINT,created_at BIGINT NOT NULL,updated_at BIGINT NOT NULL)");
+        String id = UUID.randomUUID().toString();
+        old.update("INSERT INTO tasks(task_id,prompt,status,output,created_at,updated_at) VALUES (?,?,'SUCCEEDED',?,1,2)", id, "legacy", "saved answer");
+        var migration = new ResourceDatabasePopulator(new ClassPathResource("schema.sql"));
+        migration.execute(source);
+        migration.execute(source);
+        var upgraded = new TaskStore(old, new DataSourceTransactionManager(source), mapper, routing, 1200000);
+        Task task = upgraded.get(id);
+        assertThat(task.output()).isEqualTo("saved answer");
+        assertThat(task.batchId()).isNull();
+        assertThat(task.startedAt()).isNull();
+        assertThat(task.inferenceCompletedAt()).isNull();
+        assertThat(task.finishedAt()).isNull();
+    }
 }

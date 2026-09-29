@@ -44,7 +44,7 @@ services:
     profiles: ["llm"]
     image: ollama/ollama:latest
     ports:
-      - "127.0.0.1:11434:11434"
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:
@@ -73,6 +73,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: broker:19092
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:1b}
+      OLLAMA_NUM_PREDICT: ${OLLAMA_NUM_PREDICT:-512}
       APP_NODE_ID: ${APP_NODE_ID:-local-worker-1}
       WORKER_NODES: ${WORKER_NODES:-local-worker-1}
       WORKER_ENABLED: ${WORKER_ENABLED:-true}

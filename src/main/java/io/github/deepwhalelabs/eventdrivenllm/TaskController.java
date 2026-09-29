@@ -35,4 +35,13 @@ public class TaskController {
 
     @GetMapping("/api/nodes")
     public List<String> nodes() { return routing.nodes(); }
+
+    @GetMapping("/api/batches")
+    public List<TaskStore.BatchSummary> batches(@RequestParam(defaultValue = "10") int limit) {
+        if (limit < 1 || limit > 50) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid limit (1..50)");
+        return tasks.batches(limit);
+    }
+
+    @GetMapping("/api/batches/{id}")
+    public TaskStore.Batch batch(@PathVariable UUID id) { return tasks.batch(id.toString()); }
 }

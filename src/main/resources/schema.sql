@@ -15,6 +15,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS tasks_status_updated ON tasks(status, updated_at);
+-- Additive migration: existing job records remain readable with unknown historical timings.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS batch_id VARCHAR(36);
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS queued_at BIGINT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS started_at BIGINT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS inference_completed_at BIGINT;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS finished_at BIGINT;
+CREATE INDEX IF NOT EXISTS tasks_batch_created ON tasks(batch_id, created_at);
 CREATE TABLE IF NOT EXISTS outbox (
     event_id VARCHAR(36) PRIMARY KEY,
     task_id VARCHAR(36) NOT NULL REFERENCES tasks(task_id),

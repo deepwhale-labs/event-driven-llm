@@ -31,6 +31,7 @@ flowchart LR
 | 기능 | 현재 구현 |
 | --- | --- |
 | 작업 접수·보존 | PostgreSQL 작업 저장 + 트랜잭션 Outbox |
+| 일괄 접수·시간 측정 | 최대 50개 프롬프트의 원자적 접수, 묶음 진행률, 작업별 대기·추론·전체 시간 |
 | 처리 상태·결과 | 웹 화면과 API에서 조회, 앱 재시작 후에도 결과 유지 |
 | 재처리 | 단계별 수동·자동 재시도, 처리권 만료 복구, 이전 시도 결과 차단 |
 | 노드 라우팅 | 자동 배정 또는 등록된 Worker 지정 |
@@ -38,7 +39,7 @@ flowchart LR
 | 모델 | 기본 DEMO, 선택적으로 Ollama 실제 추론 |
 | 접근 제어·검증 | 선택적 API 키, 메트릭, 단위·DB·실제 서비스 검증 |
 
-현재 입력 방식은 **프롬프트 개별 접수**입니다. 파일 일괄 등록, 업무 시스템 자동 수집, 작업 취소와 사용자별 계정은 아직 구현하지 않았습니다. 웹 화면은 한국어이며 영문 README는 실행·개발 안내를 제공합니다.
+입력은 **프롬프트 개별 접수 또는 최대 50개 일괄 접수**를 지원합니다. 파일 업로드, 업무 시스템 자동 수집, 작업 취소와 사용자별 계정은 아직 구현하지 않았습니다. 웹 화면은 한국어이며 영문 README는 실행·개발 안내를 제공합니다.
 
 ## 실행
 
@@ -50,6 +51,10 @@ docker compose up --build -d
 ```
 
 **작업 화면: http://localhost:18080** — 요청, 노드 선택, 상태 조회, 결과 확인, 실패 재시도.
+
+화면에 현재 설정된 DEMO/실제 LLM 모드와 모델명이 표시됩니다. **여러 건 한 번에**를 선택하고 각 요청 사이에 `---` 한 줄을 넣으면 묶음으로 접수합니다. **예시 10개 채우기**는 입력만 채우며, 접수 버튼을 눌러 실행합니다. 각 요청은 최대 32,000자, 묶음 전체는 최대 256,000자입니다. 입력 검증·저장 실패 시 묶음 전체를 접수하지 않습니다.
+
+묶음은 전용 링크와 최근 묶음 선택 메뉴로 다시 열 수 있습니다. 완료·실패·진행 중 개수, 진행률, 전체 경과와 평균 추론 시간이 표시됩니다. 각 작업의 **대기·추론은 최근 추론 시도 기준**, **전체 시간은 최초 접수부터 재시도·결과 전달을 포함**합니다. 결과 전달만 재시도할 때는 기존 추론 시간이 유지됩니다. 측정 항목 도입 전 기록의 미측정 값은 `—`로 표시합니다.
 
 **Kafka 구성 탭: http://localhost:18080/#kafka** — 조회 권한이 있는 일반 토픽과 Consumer 그룹을 자동 발견하는 동적 연결도입니다. 토픽·그룹·개별 Consumer가 추가·제거되면 상자가 바뀌고, 리밸런싱 시 실제 할당 파티션에 따라 연결선이 갱신됩니다. 내부 관리 토픽은 제외합니다. 10초마다 갱신하며 서버 조회는 5초간 공유 캐시합니다.
 
@@ -82,9 +87,22 @@ Invoke-RestMethod "http://localhost:18080/api/results/$($task.taskId)"
 
 `targetNode` 생략 또는 `null`은 자동 배정입니다. 요청은 1~32,000자이며, 등록되지 않은 노드는 `400`으로 거절합니다. 현재 업무 흐름은 자유 형식 프롬프트 처리입니다. 요약·분류 등의 요청도 프롬프트로 전달합니다.
 
+일괄 접수도 같은 노드 라우팅과 실패 재시도를 사용합니다. 묶음은 작업과 Outbox를 한 DB 트랜잭션에 저장하며, 작업 완료 순서는 입력 순서와 다를 수 있습니다.
+
+```powershell
+$body = @{ prompts = @('Reply briefly with hello.', 'What is 2 plus 3? Answer briefly.'); targetNode = $null } | ConvertTo-Json
+$batch = Invoke-RestMethod -Method Post -Uri http://localhost:18080/api/commands/batch `
+  -ContentType 'application/json' -Body $body
+Invoke-RestMethod "http://localhost:18080/api/batches/$($batch.summary.batchId)"
+```
+
 | API | 동작 |
 | --- | --- |
 | `POST /api/commands` | `202` · 작업과 Kafka 전송 대기 기록을 DB에 함께 저장 · taskId 반환 |
+| `POST /api/commands/batch` | `202` · `prompts` 배열 1~50개, 선택적 `targetNode` · 묶음 요약과 작업 목록 반환 |
+| `GET /api/batches?limit=10` | 최근 묶음 요약 · 최대 50개 |
+| `GET /api/batches/{batchId}` | 묶음 요약·전체 작업·결과·측정 시각 |
+| `GET /api/runtime` | 설정된 DEMO/실제 추론 모드, 모델, 응답 토큰 상한, 묶음 입력 제한 |
 | `GET /api/tasks?status=FAILED&limit=30` | 최근 작업 목록 · 상태 필터 선택 · 최대 100개 |
 | `GET /api/tasks/{taskId}` | 상태·시도 번호·실행 노드·결과·실패 단계 |
 | `GET /api/results/{taskId}` | DB에 저장한 추론 결과 · 결과 생성 전/없는 작업은 `404` |
@@ -129,6 +147,8 @@ docker compose --profile llm stop ollama
 
 `OLLAMA_MODEL` 변경 시 같은 이름의 모델을 다운로드합니다. 실제 모델 실패를 DEMO로 대체하지 않습니다.
 
+Windows 등에서 기존 Ollama가 `11434`를 사용 중이면 로컬 `.env`에 `OLLAMA_PORT=11435`를 지정해 프로젝트 컨테이너의 호스트 포트를 바꿀 수 있습니다. 앱은 계속 Docker 내부의 `ollama:11434`에 연결합니다. CPU 환경에서는 `OLLAMA_MODEL=qwen2.5:1.5b` 같은 경량 모델로 흐름을 검증할 수 있으며, 업무 적용 전 결과 품질을 확인해야 합니다. `OLLAMA_NUM_PREDICT`는 응답 토큰 상한으로 기본 512이며, 길이에 따라 출력이 잘릴 수 있습니다. `.env`는 Git에 포함되지 않습니다.
+
 ## 노드 라우팅
 
 `WORKER_NODES=local-worker-1,local-worker-2`처럼 허용 노드를 모든 앱에 동일하게 설정하고 각 인스턴스에 서로 다른 `APP_NODE_ID`를 지정합니다. 모든 인스턴스는 같은 DB·Kafka·Coral 런타임 볼륨을 사용해야 합니다. 추가 인스턴스에는 별도 호스트 앱 포트를 지정합니다.
@@ -142,6 +162,8 @@ docker compose --profile llm stop ollama
 | 환경 변수 | 기본값 / 용도 |
 | --- | --- |
 | `APP_PORT` / `KAFKA_PORT` | `18080` / `9092` · localhost 바인딩 |
+| `OLLAMA_PORT` | `11434` · 선택적 Ollama 컨테이너의 호스트 포트 |
+| `OLLAMA_MODEL` / `OLLAMA_NUM_PREDICT` | `llama3.2:1b` / `512` · 모델명 / 응답 토큰 상한 |
 | `APP_API_KEY` | 비어 있으면 로컬 인증 생략 · 지정 시 API·메트릭에 `X-API-Key` 헤더 필수 |
 | `DATABASE_PASSWORD` | 로컬 개발 기본값 · Compose DB와 앱에 함께 적용 |
 | `DATABASE_URL` / `DATABASE_USER` | Docker 외부 실행 시 PostgreSQL 접속 설정 |
@@ -179,7 +201,7 @@ Remove-Item Env:VERIFY_KAFKA
 # .\scripts\recovery.ps1 -BaseUrl http://localhost:18081 -ProjectName event-driven-llm-verify
 ```
 
-단위·DB 테스트는 H2의 PostgreSQL 호환 모드로 트랜잭션, 동시 처리권, 중복 방지, 재접수 한도, 늦은 응답 차단, API 인증을 확인합니다. 통합 스크립트는 실제 PostgreSQL·Kafka·Coral을 사용합니다. GitHub Actions는 테스트·빌드와 두 통합 스크립트를 실행합니다.
+단위·DB 테스트는 H2의 PostgreSQL 호환 모드로 트랜잭션, 일괄 접수 전체 롤백, 기존 스키마의 추가 마이그레이션, 시간 기록·재시도 보존, 동시 처리권, 중복 방지, 재접수 한도, 늦은 응답 차단, API 인증을 확인합니다. 통합 스크립트는 실제 PostgreSQL·Kafka·Coral을 사용합니다. GitHub Actions는 테스트·빌드와 두 통합 스크립트를 실행합니다.
 
 `KafkaTopologyLiveTest`와 `RealInferenceTest`는 외부 서비스가 필요한 선택 테스트이며 기본 실행에서는 건너뜁니다. Kafka 선택 테스트는 임시 토픽 생성, Consumer 1→2→1→0개 변화, 파티션 재할당, 테스트 토픽·그룹 삭제의 API 반영을 확인합니다. 다른 로컬 주소를 사용할 때는 `KAFKA_TEST_BASE_URL`과 `KAFKA_TEST_BOOTSTRAP`을 설정합니다.
 
@@ -194,7 +216,7 @@ docker compose --profile llm down
 ## 다음 작업
 
 * 실제 업무에 맞는 Ollama 모델을 선택하고 응답 품질·처리시간 측정.
-* 여러 프롬프트·파일의 일괄 등록과 결과 내보내기.
+* 파일 업로드를 통한 일괄 등록과 결과 내보내기.
 * 다중 Worker 부하 테스트, 대기시간·처리량·실패 원인 표시 강화.
 * 작업 검색·페이지 이동·대기 작업 취소.
 * 고객 문의·리뷰 등 필요한 업무 시스템 연동.

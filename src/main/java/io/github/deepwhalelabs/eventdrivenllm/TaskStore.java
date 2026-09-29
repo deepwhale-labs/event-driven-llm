@@ -21,7 +21,9 @@ public class TaskStore {
             rs.getString("prompt"), rs.getString("target_node"), rs.getString("status"), rs.getInt("attempt"),
             rs.getString("node_id"), rs.getString("output"), rs.getString("thread_id"),
             rs.getString("failure_stage"), rs.getString("last_error"), rs.getString("claim_token"),
-            rs.getObject("lease_until", Long.class), rs.getLong("created_at"), rs.getLong("updated_at"));
+            rs.getObject("lease_until", Long.class), rs.getLong("created_at"), rs.getLong("updated_at"),
+            rs.getString("batch_id"), rs.getObject("queued_at", Long.class), rs.getObject("started_at", Long.class),
+            rs.getObject("inference_completed_at", Long.class), rs.getObject("finished_at", Long.class));
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
     private final ObjectMapper mapper;
@@ -40,14 +42,46 @@ public class TaskStore {
 
     public Task create(String prompt, String targetNode) {
         String topic = routing.commandTopic(targetNode);
+        return tx.execute(s -> insert(prompt, targetNode, topic, null));
+    }
+
+    public Batch createBatch(List<String> prompts, String targetNode) {
+        String topic = routing.commandTopic(targetNode);
         return tx.execute(s -> {
-            String id = UUID.randomUUID().toString();
-            long now = System.currentTimeMillis();
-            jdbc.update("INSERT INTO tasks(task_id,prompt,target_node,status,created_at,updated_at) VALUES (?,?,?,'QUEUED',?,?)",
-                    id, prompt, targetNode, now, now);
-            enqueue(id, topic, new LlmCommand(id, prompt, 1));
-            return get(id);
+            String batchId = UUID.randomUUID().toString();
+            for (String prompt : prompts) insert(prompt, targetNode, topic, batchId);
+            return batch(batchId);
         });
+    }
+
+    private Task insert(String prompt, String targetNode, String topic, String batchId) {
+        String id = UUID.randomUUID().toString();
+        long now = System.currentTimeMillis();
+        jdbc.update("INSERT INTO tasks(task_id,prompt,target_node,status,created_at,updated_at,batch_id,queued_at) VALUES (?,?,?,'QUEUED',?,?,?,?)",
+                id, prompt, targetNode, now, now, batchId, now);
+        enqueue(id, topic, new LlmCommand(id, prompt, 1));
+        return get(id);
+    }
+
+    public Batch batch(String id) {
+        var items = jdbc.query("SELECT * FROM tasks WHERE batch_id=? ORDER BY created_at,task_id", ROW, id);
+        if (items.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Batch not found");
+        return new Batch(summarize(id, items), items);
+    }
+
+    public List<BatchSummary> batches(int limit) {
+        return jdbc.query("SELECT batch_id,MIN(created_at) AS created_at,COUNT(*) AS total,"
+                + "SUM(CASE WHEN status='SUCCEEDED' THEN 1 ELSE 0 END) AS succeeded,"
+                + "SUM(CASE WHEN status='FAILED' THEN 1 ELSE 0 END) AS failed "
+                + "FROM tasks WHERE batch_id IS NOT NULL GROUP BY batch_id ORDER BY MIN(created_at) DESC,batch_id LIMIT ?",
+                (rs, n) -> new BatchSummary(rs.getString("batch_id"), rs.getLong("created_at"), rs.getInt("total"),
+                        rs.getInt("succeeded"), rs.getInt("failed")), limit);
+    }
+
+    private static BatchSummary summarize(String id, List<Task> items) {
+        return new BatchSummary(id, items.stream().mapToLong(Task::createdAt).min().orElseThrow(), items.size(),
+                (int) items.stream().filter(t -> t.status().equals("SUCCEEDED")).count(),
+                (int) items.stream().filter(t -> t.status().equals("FAILED")).count());
     }
 
     public Task get(String id) {
@@ -72,25 +106,27 @@ public class TaskStore {
             }
             String token = UUID.randomUUID().toString();
             long now = System.currentTimeMillis();
-            jdbc.update("UPDATE tasks SET status='RUNNING',node_id=?,claim_token=?,lease_until=?,updated_at=? WHERE task_id=?",
-                    nodeId, token, now + leaseMillis, now, task.taskId());
+            jdbc.update("UPDATE tasks SET status='RUNNING',node_id=?,claim_token=?,lease_until=?,updated_at=?,started_at=?,inference_completed_at=NULL,finished_at=NULL WHERE task_id=?",
+                    nodeId, token, now + leaseMillis, now, now, task.taskId());
             return Optional.of(token);
         });
     }
 
     public void complete(LlmCommand command, String token, String nodeId, String output) {
         tx.executeWithoutResult(s -> {
-            int updated = jdbc.update("UPDATE tasks SET status='DELIVERING',output=?,claim_token=NULL,lease_until=NULL,last_error=NULL,updated_at=? "
+            long now = System.currentTimeMillis();
+            int updated = jdbc.update("UPDATE tasks SET status='DELIVERING',output=?,claim_token=NULL,lease_until=NULL,last_error=NULL,updated_at=?,inference_completed_at=? "
                     + "WHERE task_id=? AND attempt=? AND claim_token=? AND status='RUNNING'",
-                    output, System.currentTimeMillis(), command.taskId(), command.attempt(), token);
+                    output, now, now, command.taskId(), command.attempt(), token);
             if (updated == 1) enqueue(command.taskId(), routing.resultTopic(),
                     new LlmResult(command.taskId(), nodeId, output, command.attempt()));
         });
     }
 
     public void release(LlmCommand command, String token) {
-        jdbc.update("UPDATE tasks SET status='QUEUED',claim_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=? AND attempt=? AND claim_token=?",
-                System.currentTimeMillis(), command.taskId(), command.attempt(), token);
+        long now = System.currentTimeMillis();
+        jdbc.update("UPDATE tasks SET status='QUEUED',claim_token=NULL,lease_until=NULL,updated_at=?,queued_at=?,started_at=NULL,inference_completed_at=NULL WHERE task_id=? AND attempt=? AND claim_token=?",
+                now, now, command.taskId(), command.attempt(), token);
     }
 
     public void deliver(LlmResult event, CoralClient coral) {
@@ -100,8 +136,9 @@ public class TaskStore {
             // Serialize Coral session discovery and sends across application instances.
             coralLock();
             CoralClient.Delivery receipt = coral.deliver(new LlmResult(task.taskId(), task.nodeId(), task.output(), task.attempt()));
-            jdbc.update("UPDATE tasks SET status='SUCCEEDED',thread_id=?,failure_stage=NULL,last_error=NULL,updated_at=? WHERE task_id=?",
-                    receipt.threadId(), System.currentTimeMillis(), task.taskId());
+            long now = System.currentTimeMillis();
+            jdbc.update("UPDATE tasks SET status='SUCCEEDED',thread_id=?,failure_stage=NULL,last_error=NULL,updated_at=?,finished_at=? WHERE task_id=?",
+                    receipt.threadId(), now, now, task.taskId());
         });
     }
 
@@ -115,9 +152,10 @@ public class TaskStore {
 
     public void fail(String id, int attempt, String stage) {
         String expected = stage.equals("COMMAND") ? "QUEUED" : "DELIVERING";
-        jdbc.update("UPDATE tasks SET status='FAILED',failure_stage=?,last_error=?,updated_at=? WHERE task_id=? AND attempt=? AND status=?",
+        long now = System.currentTimeMillis();
+        jdbc.update("UPDATE tasks SET status='FAILED',failure_stage=?,last_error=?,updated_at=?,finished_at=? WHERE task_id=? AND attempt=? AND status=?",
                 stage, stage.equals("COMMAND") ? "Inference failed; see the command DLT" : "Coral delivery failed; see the result DLT",
-                System.currentTimeMillis(), id, attempt, expected);
+                now, now, id, attempt, expected);
     }
 
     public Task retry(String id) {
@@ -137,7 +175,7 @@ public class TaskStore {
             for (Task task : tasks) {
                 if (task.status().equals("RUNNING") && task.attempt() > maxAutoRetries) {
                     jdbc.update("UPDATE tasks SET status='FAILED',failure_stage='COMMAND',last_error='Worker lease expired',"
-                            + "claim_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?", now, task.taskId());
+                            + "claim_token=NULL,lease_until=NULL,updated_at=?,finished_at=? WHERE task_id=?", now, now, task.taskId());
                 } else {
                     requeue(task, "DELIVERY".equals(task.failureStage()));
                 }
@@ -147,8 +185,11 @@ public class TaskStore {
 
     private void requeue(Task task, boolean deliveryOnly) {
         int attempt = task.attempt() + 1;
-        jdbc.update("UPDATE tasks SET status=?,attempt=?,failure_stage=NULL,last_error=NULL,claim_token=NULL,lease_until=NULL,updated_at=? WHERE task_id=?",
-                deliveryOnly ? "DELIVERING" : "QUEUED", attempt, System.currentTimeMillis(), task.taskId());
+        long now = System.currentTimeMillis();
+        jdbc.update("UPDATE tasks SET status=?,attempt=?,failure_stage=NULL,last_error=NULL,claim_token=NULL,lease_until=NULL,updated_at=?,finished_at=NULL,"
+                + "queued_at=?,started_at=?,inference_completed_at=? WHERE task_id=?",
+                deliveryOnly ? "DELIVERING" : "QUEUED", attempt, now, deliveryOnly ? task.queuedAt() : now,
+                deliveryOnly ? task.startedAt() : null, deliveryOnly ? task.inferenceCompletedAt() : null, task.taskId());
         if (deliveryOnly) enqueue(task.taskId(), routing.resultTopic(), new LlmResult(task.taskId(), task.nodeId(), task.output(), attempt));
         else enqueue(task.taskId(), routing.commandTopic(task.targetNode()), new LlmCommand(task.taskId(), task.prompt(), attempt));
     }
@@ -161,4 +202,7 @@ public class TaskStore {
             throw new IllegalStateException("Cannot serialize task event", ex);
         }
     }
+
+    public record BatchSummary(String batchId, long createdAt, int total, int succeeded, int failed) { }
+    public record Batch(BatchSummary summary, List<Task> tasks) { }
 }

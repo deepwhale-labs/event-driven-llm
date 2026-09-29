@@ -37,6 +37,7 @@
 !/src/main/resources/application.yml
 !/src/main/resources/schema.sql
 !/src/main/resources/static/index.html
+!/src/main/resources/static/workbench.js
 !/src/main/resources/static/kafka-topology.js
 !/src/main/resources/static/kafka-topology.css
 
