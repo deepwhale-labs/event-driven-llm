@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.function.Function;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,6 +44,18 @@ public class TaskStore {
     public Task create(String prompt, String targetNode) {
         String topic = routing.commandTopic(targetNode);
         return tx.execute(s -> insert(prompt, targetNode, topic, null));
+    }
+
+    public Task createProvided(String prompt, String targetNode, String output) {
+        routing.commandTopic(targetNode);
+        return tx.execute(s -> {
+            String id = UUID.randomUUID().toString();
+            long now = System.currentTimeMillis();
+            jdbc.update("INSERT INTO tasks(task_id,prompt,target_node,status,node_id,output,created_at,updated_at,inference_completed_at) "
+                    + "VALUES (?,?,?,'DELIVERING','provided-draft',?,?,?,?)", id, prompt, targetNode, output, now, now, now);
+            enqueue(id, routing.resultTopic(), new LlmResult(id, "provided-draft", output, 1));
+            return get(id);
+        });
     }
 
     public Batch createBatch(List<String> prompts, String targetNode) {
@@ -130,12 +143,16 @@ public class TaskStore {
     }
 
     public void deliver(LlmResult event, CoralClient coral) {
+        deliver(event, task -> coral.deliver(new LlmResult(task.taskId(), task.nodeId(), task.output(), task.attempt())));
+    }
+
+    public void deliver(LlmResult event, Function<Task, CoralClient.Delivery> delivery) {
         tx.executeWithoutResult(s -> {
             Task task = find(event.taskId(), true).orElse(null);
             if (task == null || task.attempt() != event.attempt() || !task.status().equals("DELIVERING")) return;
             // Serialize Coral session discovery and sends across application instances.
             coralLock();
-            CoralClient.Delivery receipt = coral.deliver(new LlmResult(task.taskId(), task.nodeId(), task.output(), task.attempt()));
+            CoralClient.Delivery receipt = delivery.apply(task);
             long now = System.currentTimeMillis();
             jdbc.update("UPDATE tasks SET status='SUCCEEDED',thread_id=?,failure_stage=NULL,last_error=NULL,updated_at=?,finished_at=? WHERE task_id=?",
                     receipt.threadId(), now, now, task.taskId());

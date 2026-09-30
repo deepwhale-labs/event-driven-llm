@@ -40,7 +40,8 @@ function renderTopics(){
     const values=['P'+p.id,p.leader===null?'없음':'Broker '+p.leader,`${p.replicas.length} / ${p.inSyncReplicas.length}${synced?'':' · 확인 필요'}`,number(p.endOffset),group?number(progress?.committedOffset):'해당 없음',group?number(progress?.lag):'해당 없음'];
     values.forEach((value,i)=>row.append(element('td',value,i===2&&!synced?'warning':'')));body.append(row);
   }
-  table.append(body);wrapper.append(table);detail.append(wrapper,element('p','Lag는 선택한 그룹의 로그 끝·커밋 오프셋 차이이며, 보관 메시지 수나 고유 작업 수와 다릅니다. 커밋 기록이 없는 비어 있지 않은 파티션과 조회 실패 값은 —로 표시합니다.','topology-note'));
+  table.append(body);wrapper.append(table);detail.append(wrapper);
+  const help=element('details','');help.append(element('summary','오프셋 기준'),element('p','Lag = 로그 끝 − 커밋 오프셋. 보관 메시지 수·고유 작업 수와 다릅니다. 미확인 값은 —로 표시합니다.','topology-note'));detail.append(help);
 }
 
 function graphShape(data){
@@ -66,7 +67,7 @@ function describeChanges(data,recovered){
       if(counts(added,'A:')||counts(removed,'A:'))parts.push('파티션 할당 변경');
       $('graphChanges').textContent=`${new Date(data.checkedAt).toLocaleTimeString()} · ${parts.join(' · ')}`;
     }else if(recovered)$('graphChanges').textContent='연결이 복구되어 최신 구성을 반영했습니다.';
-  }else $('graphChanges').textContent='현재 조회된 구성으로 연결도를 만들었습니다. 변경 사항은 자동 반영됩니다.';
+  }else $('graphChanges').textContent='구성 변경 감지 중';
   lastShape=shape;
 }
 
@@ -85,7 +86,7 @@ function renderGraph(){
   const paths=topology.routes.filter(r=>visibleTopics.has(r.targetTopic));
   const hasOutbox=configured&&paths.some(r=>r.sourceKind==='OUTBOX');
   const svg=svgElement('svg',{width:graphWidth,'aria-hidden':'true'});const defs=svgElement('defs');
-  for(const [id,color] of [['live','#3f8c6b'],['config','#ba915d']]){
+  for(const [id,color] of [['live','#8c83cf'],['config','#a18a64']]){
     const marker=svgElement('marker',{id:'arrow-'+id,viewBox:'0 0 10 10',refX:9,refY:5,markerWidth:6,markerHeight:6,orient:'auto-start-reverse'});marker.append(svgElement('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:color}));defs.append(marker);
   }
   svg.append(defs);canvas.append(svg);
@@ -146,7 +147,7 @@ function highlightGraph(){
   for(const n of graphNodes){n.button.classList.toggle('selected',n.id===graphSelection);n.button.classList.toggle('related',related.has(n.id)&&n.id!==graphSelection);n.button.classList.toggle('dimmed',!!selected&&!related.has(n.id));n.button.setAttribute('aria-pressed',String(n.id===graphSelection));}
   for(const e of graphEdges){const match=roots.has(e.from)||roots.has(e.to);e.path.classList.toggle('selected',!!selected&&match);e.path.classList.toggle('dimmed',!!selected&&!match);e.text.style.display=selected&&match?'':'none';}
   const detail=$('graphDetail');detail.replaceChildren();
-  if(!selected){detail.append(element('strong','토픽이나 Consumer를 선택하세요.'),element('p','연결된 노드와 할당 파티션을 확인할 수 있습니다. Consumer가 없는 토픽도 표시합니다.','muted'));return;}
+  if(!selected){detail.append(element('span','노드를 선택해 연결 정보 확인','muted'));return;}
   detail.append(element('strong',selected.title));
   if(selected.type==='consumer')detail.append(element('p',`그룹: ${selected.data.group} · Member ID: ${selected.data.memberId}`,'muted'));
   if(selected.type.startsWith('group-title'))detail.append(element('p',`상태: ${selected.data.state} · 활성 Consumer ${number(selected.data.memberCount)} · Lag ${number(selected.data.lag)}`,'muted'));
@@ -202,14 +203,27 @@ async function refreshKafka(){
   finally{topologyBusy=false;$('refreshTopology').disabled=false;}
 }
 function showTab(){
-  const kafka=location.hash==='#kafka';$('workPanel').hidden=kafka;$('kafkaPanel').hidden=!kafka;
-  for(const id of ['workTab','kafkaTab']){const active=(id==='kafkaTab')===kafka;$(id).setAttribute('aria-selected',String(active));$(id).tabIndex=active?0:-1;}
-  if(kafka)refreshKafka();
+  const page=location.hash==='#kafka'?'kafka':location.hash==='#flows'?'flow':'work';
+  const url=new URL(location);if(page==='work')url.searchParams.delete('flow');else if(page==='flow'&&activeWorkflow)url.searchParams.set('flow',activeWorkflow);history.replaceState(null,'',url);
+  for(const id of ['work','flow','kafka']){const active=id===page;$(id+'Panel').hidden=!active;$(id+'Tab').setAttribute('aria-selected',String(active));$(id+'Tab').tabIndex=active?0:-1;}
+  const [title,eyebrow]={work:['실행','EXECUTIONS'],flow:['협업','WORKFLOWS'],kafka:['Kafka','INFRASTRUCTURE']}[page];
+  $('pageTitle').textContent=title;$('pageCrumb').textContent=title;$('pageEyebrow').textContent=eyebrow;document.title=title+' · Event-driven LLM';
+  $('pollLabel').replaceChildren(element('i',''),document.createTextNode(page==='kafka'?'10초마다 갱신':'3초마다 갱신'));
+  if(page==='kafka')refreshKafka();else refresh();
 }
-$('workTab').onclick=()=>{location.hash='work';};$('kafkaTab').onclick=()=>{location.hash='kafka';};$('refreshTopology').onclick=refreshKafka;
+$('workTab').onclick=()=>{location.hash='work';};$('flowTab').onclick=()=>{location.hash='flows';};$('kafkaTab').onclick=()=>{location.hash='kafka';};$('refreshTopology').onclick=refreshKafka;
 $('graphSearch').oninput=()=>{if(topology)renderGraph();};$('showConfigured').onchange=()=>{if(topology)renderGraph();};
 $('zoomIn').onclick=()=>{graphScale=Math.min(1.5,(graphScale||1)+.1);applyGraphScale();};$('zoomOut').onclick=()=>{graphScale=Math.max(.4,(graphScale||1)-.1);applyGraphScale();};$('zoomFit').onclick=()=>{graphScale=null;applyGraphScale();};
-document.querySelector('.tabs').onkeydown=event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const kafka=event.key==='End'||(event.key!=='Home'&&location.hash!=='#kafka');location.hash=kafka?'kafka':'work';$(kafka?'kafkaTab':'workTab').focus();}};
+document.querySelector('.tabs').onkeydown=event=>{
+  const tabs=['work','flow','kafka'];if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+  event.preventDefault();let index=tabs.findIndex(id=>$(id+'Tab')===event.target.closest('[role=tab]'));
+  index=event.key==='Home'?0:event.key==='End'?2:(index+(['ArrowRight','ArrowDown'].includes(event.key)?1:2))%3;
+  location.hash=index===1?'flows':tabs[index];$(tabs[index]+'Tab').focus();
+};
+const mobileNavigation=matchMedia('(max-width:640px)');
+const orientNavigation=()=>document.querySelector('.tabs').setAttribute('aria-orientation',mobileNavigation.matches?'horizontal':'vertical');
+mobileNavigation.addEventListener('change',orientNavigation);orientNavigation();
+if(activeWorkflow&&(!location.hash||location.hash==='#work'))history.replaceState(null,'',location.pathname+location.search+'#flows');
 window.addEventListener('hashchange',showTab);showTab();connect();
-setInterval(()=>{if(!document.hidden&&!$('workPanel').hidden)refresh();},3000);
+setInterval(()=>{if(!document.hidden&&$('kafkaPanel').hidden)refresh();},3000);
 setInterval(()=>{if(!document.hidden&&!$('kafkaPanel').hidden)refreshKafka();},10000);

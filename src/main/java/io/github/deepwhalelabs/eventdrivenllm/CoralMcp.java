@@ -30,6 +30,14 @@ final class CoralMcp {
         return result.path("structuredContent");
     }
 
+    String resource(String uri) {
+        JsonNode contents = call("resources/read", Map.of("uri", uri)).path("contents");
+        for (JsonNode content : contents) {
+            if (uri.equals(content.path("uri").asText()) && content.path("text").isTextual()) return content.path("text").asText();
+        }
+        throw new CoralException("Coral resource text missing");
+    }
+
     private JsonNode call(String method, Object params) {
         long id = ++sequence;
         var reply = http.request(endpoint, headers,

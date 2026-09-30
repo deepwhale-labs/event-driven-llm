@@ -146,7 +146,7 @@ class TaskStoreTest {
         Task task = store.create("hello", null);
         var inference = mock(InferenceService.class);
         when(inference.generate(anyString())).thenThrow(new IllegalStateException("model offline"));
-        var consumer = new LlmCommandConsumer(inference, mapper, store, routing);
+        var consumer = new LlmCommandConsumer(inference, mapper, store, routing, mock(WorkflowService.class));
         assertThatThrownBy(() -> consumer.consume(mapper.writeValueAsString(command(task)))).isInstanceOf(IllegalStateException.class);
         assertThat(store.get(task.taskId()).status()).isEqualTo("QUEUED");
         store.fail(task.taskId(), 1, "COMMAND");

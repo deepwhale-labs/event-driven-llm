@@ -48,6 +48,13 @@ app:
   worker-enabled: ${WORKER_ENABLED:true}
   api-key: ${APP_API_KEY:}
   processing-lease-ms: ${PROCESSING_LEASE_MS:1200000}
+  jev:
+    mode: ${JEV_MODE:off}
+    api-key: ${TYPESAFE_API_KEY:}
+    endpoint: ${JEV_ENDPOINT:https://api.typesafe.ai/v1/systemone}
+    model: ${JEV_MODEL:jev-1.13.0}
+    confidence-threshold: ${JEV_CONFIDENCE_THRESHOLD:0.85}
+    timeout-ms: ${JEV_TIMEOUT_MS:15000}
   auto-retry:
     max-retries: ${AUTO_RETRY_MAX:2}
     delay-ms: ${AUTO_RETRY_DELAY_MS:60000}

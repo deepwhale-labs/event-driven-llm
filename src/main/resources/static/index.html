@@ -3,61 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>작업실 · Event-driven LLM</title>
-  <style>
-    :root{font-family:system-ui,-apple-system,sans-serif;color:#192927;background:#f1f4ef;line-height:1.5}
-    *{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:0 auto;padding:40px 24px}
-    header{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:32px}
-    h1{font-size:32px;letter-spacing:-1px;margin:0}h2{font-size:18px;margin:0 0 16px}p{color:#566560}
-    .tag{font-size:12px;letter-spacing:2px;color:#486d5e}.grid{display:grid;grid-template-columns:1fr 1.15fr;gap:24px}
-    .panel{background:#fff;border:1px solid #d7e0d8;border-radius:16px;padding:24px}.wide{grid-column:1/-1}
-    label{display:block;font-size:13px;font-weight:650;margin-bottom:8px}textarea,input,select{font:inherit;border:1px solid #bccbc0;border-radius:8px;background:white;padding:10px;width:100%;color:inherit}
-    textarea{resize:vertical;min-height:180px}button{font:inherit;border:0;border-radius:8px;padding:10px 16px;background:#235844;color:white;cursor:pointer}
-    button:disabled{opacity:.55;cursor:wait}button.secondary{background:#e9eee9;color:#244f3e}.row{display:flex;align-items:center;gap:12px;margin-top:16px}.row select{flex:1}
-    #notice{min-height:24px;margin-bottom:16px;color:#235844}#notice.error{color:#a32a25}
-    pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}.muted{color:#65716b;font-size:13px}
-    .task{display:block;width:100%;text-align:left;background:#fff;color:inherit;border:1px solid #d7e0d8;margin-top:10px;padding:14px}
-    .task:hover,.task[aria-pressed=true]{border-color:#235844;background:#f3f7f0}.task small{display:block;margin-top:6px;color:#5a6961}
-    .badge{display:inline-block;font-size:12px;border-radius:20px;background:#e9eee9;padding:3px 9px;margin-right:8px}.FAILED{background:#fde9e6;color:#9e2b24}.SUCCEEDED{background:#e3f2e6;color:#256043}
-    #detail{min-height:215px}#result{margin-top:16px;padding-top:16px;border-top:1px solid #e1e7e0;max-height:460px;overflow:auto}
-    .access{width:240px}#filter{max-width:160px}.listhead{display:flex;justify-content:space-between;align-items:center;gap:12px}.listhead h2{margin:0}
-    [hidden]{display:none!important}.tabs{display:flex;gap:6px;border-bottom:1px solid #d7e0d8;margin-bottom:24px;padding-bottom:10px}.tab{background:transparent;color:#596860}.tab[aria-selected=true]{background:#235844;color:white}
-    .composehead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.composehead h2{margin:0}.composehead select{width:auto;font-size:13px}.model-info{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 18px;font-size:13px}.model-info .badge{margin:0}.model-info .demo{background:#fff1dc;color:#91611d}#inputHelp{margin:8px 0;font-size:12px;color:#65716b}#inputCount{font-size:12px;min-height:20px;color:#526b5b}#inputCount.invalid{color:#a32a25}#sampleBatch{font-size:12px;padding:6px 10px;margin-bottom:12px}.timings{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0}.timings div{background:#f3f6f0;border:1px solid #dce5d8;border-radius:8px;padding:9px}.timings small{display:block;font-size:11px;color:#637361}.timings strong{font-size:15px;font-weight:650}.batch-summary{background:#f5f8f1;border:1px solid #d8e3d0;border-radius:12px;padding:18px;margin:16px 0}.batch-summary p{margin:8px 0;font-size:12px}.batch-summary progress{width:100%;height:9px;accent-color:#2e7452}.batch-numbers{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;margin:10px 0}.batch-numbers strong{font-size:20px;display:block}.taskfilters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.taskfilters select{font-size:13px;width:auto;max-width:270px}.batch-summary a{color:#235844;overflow-wrap:anywhere}#batchTiming{color:#41604b}.task-time{font-size:12px;color:#526d59;margin-top:6px}.listhead{flex-wrap:wrap}button:focus-visible,a:focus-visible{outline:3px solid #7aa18a;outline-offset:3px}
-    @media(max-width:720px){main{padding:24px 16px}.grid{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.access{width:100%}.panel{padding:18px}}
-  </style>
+  <meta name="color-scheme" content="dark">
+  <title>Console · Event-driven LLM</title>
+  <link rel="stylesheet" href="/console.css">
   <link rel="stylesheet" href="/kafka-topology.css">
 </head>
 <body>
-<main>
-  <header><div><div class="tag">EVENT-DRIVEN LLM</div><h1>작업실</h1><p>작업을 요청하고 진행 상황과 결과를 확인하세요.</p></div>
-    <div class="access"><label for="apiKey">접근 키 <span class="muted">설정된 경우</span></label><input id="apiKey" type="password" autocomplete="off" placeholder="API 키 입력"><button class="secondary" id="connect" style="margin-top:8px">연결</button></div></header>
-  <div id="notice" role="status" aria-live="polite"></div>
-  <nav class="tabs" role="tablist" aria-label="화면 선택"><button id="workTab" class="tab" role="tab" aria-controls="workPanel" aria-selected="true">작업실</button><button id="kafkaTab" class="tab" role="tab" aria-controls="kafkaPanel" aria-selected="false" tabindex="-1">Kafka 구성</button></nav>
-  <div class="grid" id="workPanel" role="tabpanel" aria-labelledby="workTab">
-    <section class="panel"><div class="composehead"><h2>새 작업</h2><select id="requestMode" aria-label="요청 방식"><option value="single">한 건씩</option><option value="batch">여러 건 한 번에</option></select></div><div id="modelInfo" class="model-info">모델 설정 확인 중…</div><form id="requestForm"><label for="prompt">요청 내용</label><button id="sampleBatch" class="secondary" type="button" hidden>예시 10개 채우기</button><textarea id="prompt" required maxlength="32000" placeholder="예: 아래 글의 핵심 내용을 세 문장으로 정리해 주세요."></textarea><p id="inputHelp">한 작업에 최대 32,000자까지 입력할 수 있습니다.</p><div id="inputCount" aria-live="polite"></div>
-      <div class="row"><label for="node" style="margin:0">처리 노드</label><select id="node"><option value="">자동 배정</option></select><button id="submit" type="submit">작업 요청</button></div></form></section>
-    <section class="panel"><h2>작업 결과</h2><div id="detail"><p class="muted">목록에서 작업을 선택하세요.</p></div></section>
-    <section class="panel wide"><div class="listhead"><h2 id="taskListTitle">최근 작업</h2><div class="taskfilters"><select id="batchFilter" aria-label="작업 묶음 선택"><option value="">전체 최근 작업</option></select><select id="filter" aria-label="작업 상태 필터"><option value="">전체 상태</option><option value="QUEUED">대기</option><option value="RUNNING">처리 중</option><option value="DELIVERING">전달 중</option><option value="SUCCEEDED">완료</option><option value="FAILED">실패</option></select></div></div><div id="batchSummary" class="batch-summary" hidden></div><div id="tasks"><p class="muted">작업을 불러오는 중입니다.</p></div></section>
-  </div>
-  <section id="kafkaPanel" role="tabpanel" aria-labelledby="kafkaTab" hidden>
-    <div class="topology-header"><div><div class="tag">KAFKA TOPOLOGY</div><h2>메시지가 흐르는 길</h2><p class="muted">토픽과 Consumer의 증감·할당 변화가 연결도에 자동 반영됩니다.</p></div><button id="refreshTopology" class="secondary">새로고침</button></div>
-    <div class="topology-status" role="status" aria-live="polite"><span id="kafkaConnection">구성 조회 중…</span><span id="kafkaUpdated" class="muted">10초마다 자동 갱신</span></div>
-    <div id="kafkaStats" class="stats"></div>
-    <div class="panel" id="graphPanel">
-      <div class="listhead"><h2>실시간 연결도</h2><span class="muted" id="graphCount"></span></div>
-      <div id="brokerBand" class="broker-band"></div>
-      <div class="graph-toolbar"><input id="graphSearch" type="search" placeholder="토픽 · 그룹 · Consumer 검색" aria-label="연결도 검색"><label class="graph-toggle"><input id="showConfigured" type="checkbox" checked>앱 발행·실패 경로</label><div class="zoom-controls"><button class="secondary" id="zoomOut" aria-label="축소">−</button><output id="graphZoom">100%</output><button class="secondary" id="zoomIn" aria-label="확대">+</button><button class="secondary" id="zoomFit">맞춤</button></div></div>
-      <div class="graph-legend"><span><i class="legend-line"></i>현재 파티션 할당</span><span><i class="legend-line configured"></i>앱 설정의 발행·실패 경로</span><span>큰 테두리: Consumer 그룹</span></div>
-      <div id="graphViewport" class="graph-viewport" tabindex="0" role="region" aria-label="Kafka 동적 연결도. 스크롤로 이동하고 노드를 선택해 상세 정보를 확인하세요."><div id="graphSizer" class="graph-sizer"><div id="graphCanvas" class="graph-canvas"></div></div></div>
-      <p class="graph-hint">노드를 누르면 연결 관계를 강조합니다. 확대 후 스크롤로 이동할 수 있습니다.</p>
-      <p id="graphChanges" class="graph-changes" role="status" aria-live="polite"></p>
-      <div id="graphDetail" class="graph-detail"></div>
-      <p id="kafkaNote" class="topology-note">내부 관리 토픽은 제외합니다. 실선은 현재 할당이며 실제 메시지 이동을 뜻하지 않습니다. 커밋 이력만 있는 그룹은 활성 연결선 없이 표시합니다.</p>
-    </div>
-    <div class="panel config-panel"><h2>Consumer 그룹</h2><div id="kafkaGroups" class="groups"></div></div>
-    <div class="panel config-panel"><div class="listhead"><h2>토픽과 파티션</h2><span class="muted">조회 가능한 일반 토픽</span></div><div id="topicPicker" class="topic-picker"></div><div id="topicDetail" class="topic-detail" tabindex="-1"></div></div>
-  </section>
-</main>
+<svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+  <symbol id="i-run" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="m10 8 6 4-6 4Z"/></symbol>
+  <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="15" y="15" width="6" height="6" rx="1.5"/><path d="M6 9v6a3 3 0 0 0 3 3h6M9 6h6a3 3 0 0 1 3 3v6"/></symbol>
+  <symbol id="i-kafka" viewBox="0 0 24 24"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m9 10 6-4M9 14l6 4"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="5"/><path d="m12 12 9 9m-5-5 3-3m-1 5 3-3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 3M4 16l2 3a7 7 0 0 0 12-2"/></symbol>
+</defs></svg>
+<a class="skip-link" href="#main">본문으로 이동</a>
+<aside class="sidebar">
+  <a class="brand" href="#work"><span class="brand-mark" aria-hidden="true">e<span>↗</span></span><span>Event-driven<span class="brand-sub">LLM CONSOLE</span></span></a>
+  <div class="workspace"><span class="workspace-avatar">L</span><div>Local workspace<small>개발 환경</small></div><span class="workspace-dot" aria-hidden="true"></span></div>
+  <div class="nav-label">WORKSPACE</div>
+  <nav class="tabs" role="tablist" aria-label="콘솔 메뉴" aria-orientation="vertical">
+    <button id="workTab" class="tab" role="tab" aria-controls="workPanel" aria-selected="true"><svg class="icon"><use href="#i-run"/></svg><span>실행</span><span class="nav-count" id="runCount">—</span></button>
+    <button id="flowTab" class="tab" role="tab" aria-controls="flowPanel" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-flow"/></svg><span>협업</span><span class="nav-count" id="flowCount">—</span></button>
+    <button id="kafkaTab" class="tab" role="tab" aria-controls="kafkaPanel" aria-selected="false" tabindex="-1"><svg class="icon"><use href="#i-kafka"/></svg><span>Kafka</span></button>
+  </nav>
+  <div class="sidebar-bottom"><div class="runtime-label">RUNTIME</div><div id="runtimeModel" class="runtime-model">연결 확인 중</div><div class="connection-state" id="connectionState"><i></i><span>연결 중</span></div><button class="settings-button" id="openAccess" aria-label="연결 설정"><svg class="icon"><use href="#i-key"/></svg>연결 설정</button></div>
+</aside>
+<div class="app-shell">
+  <header class="topbar"><div class="breadcrumb"><span>Workspace</span><span class="slash">/</span><strong id="pageCrumb">실행</strong></div><div class="topbar-actions"><span class="environment">LOCAL</span><button id="newRun" class="primary"><svg class="icon"><use href="#i-plus"/></svg>새 실행</button></div></header>
+  <main id="main" tabindex="-1">
+    <div class="page-heading"><div><div class="eyebrow" id="pageEyebrow">EXECUTIONS</div><h1 id="pageTitle">실행</h1></div><span class="live-label" id="pollLabel"><i></i>3초마다 갱신</span></div>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <section id="workPanel" role="tabpanel" aria-labelledby="workTab">
+      <div id="runStats" class="run-stats" aria-label="현재 목록의 실행 상태"></div>
+      <div class="execution-layout">
+        <section class="panel execution-list"><div class="listhead panel-heading"><h2 id="taskListTitle">최근 실행</h2><span id="listCount" class="muted"></span></div><div class="taskfilters"><select id="batchFilter" aria-label="작업 묶음 선택"><option value="">전체 최근 실행</option></select><select id="filter" aria-label="작업 상태 필터"><option value="">전체 상태</option><option value="QUEUED">대기</option><option value="RUNNING">처리 중</option><option value="DELIVERING">전달 중</option><option value="SUCCEEDED">완료</option><option value="FAILED">실패</option></select></div><div id="batchSummary" class="batch-summary" hidden></div><div class="task-table-head" aria-hidden="true"><span>요청</span><span>상태</span><span>경과</span></div><div id="tasks" aria-label="실행 목록"><div class="empty-state">실행 기록을 불러오는 중…</div></div></section>
+        <section class="panel inspector"><div class="panel-heading listhead"><h2>실행 상세</h2><span id="jevInfo" class="integration-state">Jev · 확인 중</span></div><div id="detail"><div class="empty-state"><svg class="icon empty-icon"><use href="#i-run"/></svg><strong>실행 결과</strong><span>목록에서 실행을 선택하세요.</span></div></div></section>
+      </div>
+    </section>
+    <section id="flowPanel" role="tabpanel" aria-labelledby="flowTab" hidden><section class="panel" id="workflowSection"><div class="listhead panel-heading"><h2>작성 → 검토 → 수정</h2><select id="workflowPicker" aria-label="협업 작업 선택"><option value="">최근 협업 선택</option></select></div><div id="workflowDetail"><div class="empty-state">협업 기록을 불러오는 중…</div></div></section></section>
+    <section id="kafkaPanel" role="tabpanel" aria-labelledby="kafkaTab" hidden>
+      <div class="topology-header"><div class="topology-status" role="status" aria-live="polite"><span id="kafkaConnection">연결 확인 중</span><span id="kafkaUpdated" class="muted"></span></div><button id="refreshTopology" class="secondary"><svg class="icon"><use href="#i-refresh"/></svg>새로고침</button></div>
+      <div id="kafkaStats" class="stats"></div>
+      <div class="panel" id="graphPanel">
+        <div class="listhead"><h2>토폴로지</h2><span class="muted" id="graphCount"></span></div><div id="brokerBand" class="broker-band"></div>
+        <div class="graph-toolbar"><input id="graphSearch" type="search" placeholder="토픽, 그룹, Consumer 검색" aria-label="연결도 검색"><label class="graph-toggle"><input id="showConfigured" type="checkbox" checked>설정 경로</label><div class="zoom-controls"><button class="secondary" id="zoomOut" aria-label="축소">−</button><output id="graphZoom">100%</output><button class="secondary" id="zoomIn" aria-label="확대">+</button><button class="secondary" id="zoomFit">맞춤</button></div></div>
+        <div class="graph-legend"><span><i class="legend-line"></i>파티션 할당</span><span><i class="legend-line configured"></i>발행·실패 경로</span></div>
+        <div id="graphViewport" class="graph-viewport" tabindex="0" role="region" aria-label="Kafka 연결도"><div id="graphSizer" class="graph-sizer"><div id="graphCanvas" class="graph-canvas"></div></div></div>
+        <div class="graph-footer"><p id="graphChanges" class="graph-changes" role="status" aria-live="polite"></p><details class="graph-help"><summary>그래프 기준</summary><p id="kafkaNote" class="topology-note">실선은 현재 파티션 할당, 점선은 앱 설정 경로입니다. 메시지 이동 애니메이션이 아니며 내부 관리 토픽은 제외합니다.</p></details></div><div id="graphDetail" class="graph-detail"></div>
+      </div>
+      <div class="panel config-panel"><h2>Consumer 그룹</h2><div id="kafkaGroups" class="groups"></div></div>
+      <div class="panel config-panel"><div class="listhead"><h2>토픽</h2></div><div id="topicPicker" class="topic-picker"></div><div id="topicDetail" class="topic-detail" tabindex="-1"></div></div>
+    </section>
+  </main>
+</div>
+<dialog id="composeDialog" aria-labelledby="composeTitle"><div class="dialog-heading"><div><div class="eyebrow">NEW EXECUTION</div><h2 id="composeTitle">새 실행</h2></div><button type="button" class="icon-button" data-close="composeDialog" aria-label="닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="requestForm"><div class="composehead"><label for="requestMode">실행 방식</label><select id="requestMode"><option value="single">단일 실행</option><option value="batch">일괄 실행</option><option value="workflow">작성 → 검토 → 수정</option></select></div><div id="modelInfo" class="model-info">모델 확인 중…</div><div class="compose-label"><label for="prompt">프롬프트</label><button id="sampleBatch" class="text-button" type="button" hidden>예시 넣기</button></div><textarea id="prompt" required maxlength="32000" placeholder="무엇을 실행할까요?"></textarea><div class="input-meta"><span id="inputHelp">최대 32,000자</span><span id="inputCount" aria-live="polite"></span></div><div id="workflowOptions" hidden><label class="checkbox-label"><input id="useDraft" type="checkbox">기존 초안 사용</label><textarea id="initialDraft" aria-label="기존 초안" maxlength="8000" placeholder="검토할 초안" hidden></textarea></div><div id="composeError" class="form-error" role="alert" hidden></div><div class="dialog-footer"><div class="node-select"><label for="node">노드</label><select id="node"><option value="">자동 배정</option></select></div><button id="submit" class="primary" type="submit">실행</button></div></form></dialog>
+<dialog id="accessDialog" class="small-dialog" aria-labelledby="accessTitle"><div class="dialog-heading"><h2 id="accessTitle">연결 설정</h2><button class="icon-button" data-close="accessDialog" aria-label="닫기"><svg class="icon"><use href="#i-close"/></svg></button></div><form id="accessForm"><label for="apiKey">API 키 <span class="muted">선택</span></label><input id="apiKey" type="password" autocomplete="off" placeholder="서버에 설정된 접근 키"><div id="accessError" class="form-error" role="alert" hidden></div><div class="dialog-footer"><span class="muted">현재 탭에서만 사용</span><button id="connect" class="primary" type="submit">연결</button></div></form></dialog>
 <script src="/workbench.js"></script>
 <script src="/kafka-topology.js"></script>
 </body>

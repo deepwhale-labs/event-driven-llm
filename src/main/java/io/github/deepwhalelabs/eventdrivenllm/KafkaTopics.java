@@ -8,6 +8,9 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.autoconfigure.kafka.ConcurrentKafkaListenerContainerFactoryConfigurer;
+import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
+import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.KafkaAdmin;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -18,6 +21,22 @@ import org.springframework.util.backoff.FixedBackOff;
 @Configuration
 public class KafkaTopics {
     public static final int RETRY_COUNT = 2;
+    @Bean
+    ConcurrentKafkaListenerContainerFactory<Object, Object> jevKafkaListenerContainerFactory(
+            ConcurrentKafkaListenerContainerFactoryConfigurer configurer, ConsumerFactory<Object, Object> consumers,
+            KafkaTemplate<String, String> kafka) {
+        var factory = new ConcurrentKafkaListenerContainerFactory<Object, Object>();
+        configurer.configure(factory, consumers);
+        var dlt = new DeadLetterPublishingRecoverer(kafka,
+                (record, exception) -> new TopicPartition(record.topic() + ".DLT", record.partition()));
+        dlt.setFailIfSendResultIsError(true);
+        // Keep retrying DB persistence failures. Poison events go to DLT without failing the delivery task.
+        var errors = new DefaultErrorHandler(dlt, new FixedBackOff(1000L, FixedBackOff.UNLIMITED_ATTEMPTS));
+        errors.addNotRetryableExceptions(JsonProcessingException.class, IllegalArgumentException.class);
+        factory.setCommonErrorHandler(errors);
+        return factory;
+    }
+
     @Bean
     KafkaAdmin.NewTopics topics(Routing routing) {
         var names = new ArrayList<String>();

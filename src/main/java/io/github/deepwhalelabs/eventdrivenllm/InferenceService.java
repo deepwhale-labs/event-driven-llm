@@ -1,6 +1,10 @@
 package io.github.deepwhalelabs.eventdrivenllm;
 
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.prompt.Prompt;
+import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -19,5 +23,10 @@ public class InferenceService {
 
     public String generate(String prompt) {
         return model == null ? "[DEMO - no model inference] Received: " + prompt : model.call(prompt);
+    }
+
+    public String generate(String system, String prompt) {
+        if (model == null) return generate(prompt);
+        return model.call(new Prompt(List.of(new SystemMessage(system), new UserMessage(prompt)))).getResult().getOutput().getText();
     }
 }

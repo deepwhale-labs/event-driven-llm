@@ -74,6 +74,12 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:1b}
       OLLAMA_NUM_PREDICT: ${OLLAMA_NUM_PREDICT:-512}
+      JEV_MODE: ${JEV_MODE:-off}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      JEV_ENDPOINT: ${JEV_ENDPOINT:-https://api.typesafe.ai/v1/systemone}
+      JEV_MODEL: ${JEV_MODEL:-jev-1.13.0}
+      JEV_CONFIDENCE_THRESHOLD: ${JEV_CONFIDENCE_THRESHOLD:-0.85}
+      JEV_TIMEOUT_MS: ${JEV_TIMEOUT_MS:-15000}
       APP_NODE_ID: ${APP_NODE_ID:-local-worker-1}
       WORKER_NODES: ${WORKER_NODES:-local-worker-1}
       WORKER_ENABLED: ${WORKER_ENABLED:-true}

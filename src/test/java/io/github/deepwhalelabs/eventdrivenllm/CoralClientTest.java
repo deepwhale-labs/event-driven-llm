@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.ArrayList;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +35,8 @@ class CoralClientTest {
     private int sentMessages;
     private boolean failAfterSend;
     private boolean remoteFailure;
+    private boolean resourceFailure;
+    private final List<String> readers = new ArrayList<>();
 
     @BeforeEach
     void start() throws IOException {
@@ -99,6 +102,43 @@ class CoralClientTest {
         }
     }
 
+    @Test
+    void workflowRolesReadTheirMcpResourcesAndRestoreConversationAfterCoralRestart() {
+        var workflow = new CoralWorkflowClient(mapper, base, runtime);
+        String id = UUID.randomUUID().toString();
+        var draft = new CoralWorkflowClient.Message(id, "draft-task", "DRAFT", "오후 3시 안내", "오전 3시 안내");
+        var review = new CoralWorkflowClient.Message(id, "review-task", "REVIEW", "오후 3시 안내", "오전을 오후로 고치세요");
+        var first = workflow.exchange(id, List.of(draft), "reviewer");
+        var second = workflow.exchange(id, List.of(draft, review), "writer");
+        assertThat(second.messages()).containsExactly(draft, review);
+        assertThat(second.threadId()).isEqualTo(first.threadId());
+        assertThat(readers).containsExactly("reviewer", "writer");
+        assertThat(sentMessages).isEqualTo(2);
+        var restarted = new CoralWorkflowClient(mapper, base, runtime);
+        restarted.exchange(id, List.of(draft, review), "writer");
+        assertThat(sentMessages).isEqualTo(2);
+        sessionId = null;
+        threads.removeAll();
+        var restored = restarted.exchange(id, List.of(draft, review), "writer");
+        assertThat(restored.threadId()).isNotEqualTo(first.threadId());
+        assertThat(restored.messages()).containsExactly(draft, review);
+        assertThat(sentMessages).isEqualTo(4);
+    }
+
+    @Test
+    void workflowNeverSubstitutesDbContextForAnUnavailableCoralReadAndDeduplicatesLostSend() {
+        var workflow = new CoralWorkflowClient(mapper, base, runtime);
+        String id = UUID.randomUUID().toString();
+        var draft = new CoralWorkflowClient.Message(id, "draft", "DRAFT", "request", "answer");
+        failAfterSend = true;
+        assertThatThrownBy(() -> workflow.exchange(id, List.of(draft), "reviewer")).isInstanceOf(CoralException.class);
+        resourceFailure = true;
+        assertThatThrownBy(() -> workflow.exchange(id, List.of(draft), "reviewer")).isInstanceOf(CoralException.class);
+        resourceFailure = false;
+        assertThat(workflow.exchange(id, List.of(draft), "reviewer").messages()).containsExactly(draft);
+        assertThat(sentMessages).isEqualTo(1);
+    }
+
     private void handle(HttpExchange exchange) throws IOException {
         try (exchange) {
             String path = exchange.getRequestURI().getPath();
@@ -112,11 +152,13 @@ class CoralClientTest {
                     return;
                 }
                 if (path.endsWith("/local/session") && exchange.getRequestMethod().equals("POST")) {
+                    JsonNode creation = mapper.readTree(exchange.getRequestBody());
                     sessionId = UUID.randomUUID().toString();
                     createdSessions++;
-                    for (String agent : List.of("notifier", "observer")) {
-                        Files.writeString(runtime.resolve(sessionId + "-" + agent + ".url"),
-                                "http://localhost:5555/mcp/v1/" + agent + "/mcp");
+                    for (JsonNode agent : creation.path("agentGraphRequest").path("agents")) {
+                        String name = agent.path("name").asText();
+                        Files.writeString(runtime.resolve(sessionId + "-" + name + ".url"),
+                                "http://localhost:5555/mcp/v1/" + name + "/mcp");
                     }
                     respond(exchange, 200, Map.of("sessionId", sessionId));
                 } else if (path.contains("/namespace/")) {
@@ -139,6 +181,19 @@ class CoralClientTest {
             if (method.equals("initialize")) {
                 exchange.getResponseHeaders().add("Mcp-Session-Id", "test-session");
                 result = Map.of("protocolVersion", "2025-06-18");
+            } else if (method.equals("resources/read")) {
+                if (resourceFailure) { respond(exchange, 503, Map.of()); return; }
+                String reader = path.split("/")[3];
+                readers.add(reader);
+                var state = mapper.createArrayNode();
+                for (JsonNode thread : threads) {
+                    var item = state.addObject().put("threadId", thread.path("id").asText()).put("threadName", thread.path("name").asText());
+                    var messages = item.putArray("messages");
+                    for (JsonNode message : thread.path("messages")) messages.addObject()
+                            .put("messageText", message.path("text").asText()).put("sendingAgentName", message.path("senderName").asText());
+                }
+                result = Map.of("contents", List.of(Map.of("uri", "coral://state", "text",
+                        "# Agents\n```json\n[]\n```\n# Threads and messages\n```json\n" + state + "\n```\n")));
             } else {
                 if (!"test-session".equals(exchange.getRequestHeaders().getFirst("Mcp-Session-Id"))) {
                     respond(exchange, 400, Map.of());
@@ -153,8 +208,10 @@ class CoralClientTest {
                     result = Map.of("structuredContent", Map.of("thread", thread));
                 } else {
                     sentMessages++;
-                    ((ArrayNode) threads.get(0).get("messages")).addObject()
-                            .put("senderName", "notifier").put("text", arguments.path("content").asText());
+                    for (JsonNode thread : threads) if (thread.path("id").asText().equals(arguments.path("threadId").asText())) {
+                        ((ArrayNode) thread.get("messages")).addObject()
+                                .put("senderName", path.split("/")[3]).put("text", arguments.path("content").asText());
+                    }
                     if (failAfterSend) {
                         failAfterSend = false;
                         respond(exchange, 502, Map.of("error", "response lost after save"));

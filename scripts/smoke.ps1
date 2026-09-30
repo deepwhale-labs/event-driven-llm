@@ -44,6 +44,10 @@ foreach ($task in $finished.tasks) {
 }
 $runtime = Invoke-RestMethod "$BaseUrl/api/runtime" -Headers $headers
 if ($RequireModel -and $runtime.mode -ne 'OLLAMA') { throw 'Runtime is not configured for real inference.' }
+$evaluation = Invoke-RestMethod "$BaseUrl/api/evaluations/config" -Headers $headers
+if ($evaluation.mode -notin @('OFF', 'SHADOW')) { throw 'Invalid evaluation configuration.' }
+$history = Invoke-RestMethod "$BaseUrl/api/tasks/$($finished.tasks[0].taskId)/evaluations" -Headers $headers
+if ($evaluation.PSObject.Properties.Name -contains 'apiKey') { throw 'Evaluation config exposed a credential field.' }
 $topology = Invoke-RestMethod "$BaseUrl/api/kafka/topology" -Headers $headers
 if ($topology.status -ne 'CONNECTED' -or $topology.brokers.Count -lt 1 -or $topology.topics.Count -lt 4) { throw 'Kafka topology unavailable.' }
-Write-Output 'PASS: durable API -> Kafka -> worker -> saved result -> Coral; node routing; atomic batch; timings; runtime; metrics; Kafka topology'
+Write-Output 'PASS: durable API -> Kafka -> worker -> saved result -> Coral; node routing; atomic batch; timings; runtime; evaluation API; metrics; Kafka topology'

@@ -8,10 +8,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.LinkedHashMap;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -21,20 +23,30 @@ public class CoralClient {
     private final CoralHttp http;
     private final URI base;
     private final Path runtime;
+    private final String namespace;
+    private final List<String> agents;
+    private final Map<String, CoralMcp> connections = new LinkedHashMap<>();
     private String sessionId;
     private CoralMcp notifier;
 
+    @Autowired
     public CoralClient(ObjectMapper mapper, @Value("${app.coral.base-url}") URI base,
             @Value("${app.coral.runtime-dir}") Path runtime) {
+        this(mapper, base, runtime, NAMESPACE, List.of("notifier", "observer"));
+    }
+
+    CoralClient(ObjectMapper mapper, URI base, Path runtime, String namespace, List<String> agents) {
         this.mapper = mapper;
         this.http = new CoralHttp(mapper);
         this.base = base;
         this.runtime = runtime;
+        this.namespace = namespace;
+        this.agents = List.copyOf(agents);
     }
 
     public synchronized Map<String, String> status() {
         state();
-        return Map.of("status", "connected", "namespace", NAMESPACE, "sessionId", sessionId);
+        return Map.of("status", "connected", "namespace", namespace, "sessionId", sessionId);
     }
 
     public synchronized Optional<Delivery> result(UUID taskId) {
@@ -72,9 +84,9 @@ public class CoralClient {
         }
     }
 
-    private JsonNode state() {
+    synchronized JsonNode state() {
         if (sessionId != null) {
-            JsonNode current = admin("/session/" + NAMESPACE + "/" + sessionId + "/extended", null, true);
+            JsonNode current = admin("/session/" + namespace + "/" + sessionId + "/extended", null, true);
             if (!current.isMissingNode() && current.path("base").path("status").path("type").asText().equals("executed")) {
                 connect();
                 return current;
@@ -82,7 +94,7 @@ public class CoralClient {
             sessionId = null;
             notifier = null;
         }
-        JsonNode sessions = admin("/namespace/" + NAMESPACE, null, true);
+        JsonNode sessions = admin("/namespace/" + namespace, null, true);
         if (!sessions.isMissingNode() && !sessions.isArray()) {
             throw new CoralException("Invalid Coral session list");
         }
@@ -94,15 +106,15 @@ public class CoralClient {
         }
         if (sessionId == null) {
             JsonNode receipt = admin("/session", Map.of(
-                    "agentGraphRequest", Map.of("agents", List.of(agent("notifier"), agent("observer")),
-                            "groups", List.of(List.of("notifier", "observer"))),
+                    "agentGraphRequest", Map.of("agents", agents.stream().map(this::agent).toList(),
+                            "groups", List.of(agents)),
                     "namespaceProvider", Map.of("type", "create_if_not_exists", "namespaceRequest",
-                            Map.of("name", NAMESPACE, "deleteOnLastSessionExit", false)),
+                            Map.of("name", namespace, "deleteOnLastSessionExit", false)),
                     "execution", Map.of("mode", "immediate")), false);
             sessionId = UUID.fromString(receipt.path("sessionId").asText()).toString();
         }
         connect();
-        return admin("/session/" + NAMESPACE + "/" + sessionId + "/extended", null, false);
+        return admin("/session/" + namespace + "/" + sessionId + "/extended", null, false);
     }
 
     private Map<String, Object> agent(String name) {
@@ -114,10 +126,20 @@ public class CoralClient {
 
     private void connect() {
         if (notifier == null) {
-            CoralMcp candidate = new CoralMcp(http, endpoint("notifier"));
-            new CoralMcp(http, endpoint("observer"));
-            notifier = candidate;
+            connections.clear();
+            for (String agent : agents) connections.put(agent, new CoralMcp(http, endpoint(agent)));
+            notifier = connections.get(agents.getFirst());
         }
+    }
+
+    synchronized JsonNode toolAs(String agent, String tool, Map<String, Object> arguments) {
+        try { state(); return connections.get(agent).tool(tool, arguments); }
+        catch (CoralException ex) { notifier = null; throw ex; }
+    }
+
+    synchronized String readAs(String agent) {
+        try { state(); return connections.get(agent).resource("coral://state"); }
+        catch (CoralException ex) { notifier = null; throw ex; }
     }
 
     private URI endpoint(String name) {
