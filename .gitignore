@@ -30,6 +30,7 @@
 !/docker-compose.yml
 !/docker-compose.gpu.yml
 !/docker-compose.ollama.yml
+!/docker-compose.codex.yml
 !/docker/coral/Dockerfile
 !/docker/coral/.dockerignore
 !/docker/coral/entrypoint.sh
@@ -40,6 +41,9 @@
 !/scripts/recovery.ps1
 !/scripts/workflow.ps1
 !/scripts/compare.ps1
+!/scripts/codex_bridge.py
+!/scripts/test_codex_bridge.py
+!/scripts/start-codex.ps1
 !/.github/workflows/ci.yml
 !/gradle/wrapper/gradle-wrapper.jar
 !/gradle/wrapper/gradle-wrapper.properties

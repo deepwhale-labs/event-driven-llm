@@ -13,7 +13,7 @@ function Read-ComparisonJson([string]$Uri) {
     return [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()) | ConvertFrom-Json
 }
 $runtime = Read-ComparisonJson "$BaseUrl/api/runtime"
-if ($runtime.mode -ne 'OLLAMA') { throw 'This experiment requires a real Ollama model.' }
+if ($runtime.mode -notin @('OLLAMA', 'CODEX_CLI')) { throw 'This experiment requires a real model.' }
 if (-not $TargetNode) {
     $nodes = @(Read-ComparisonJson "$BaseUrl/api/nodes")
     if (-not $nodes.Count) { throw 'A configured worker node is required.' }

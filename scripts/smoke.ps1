@@ -43,7 +43,7 @@ foreach ($task in $finished.tasks) {
     if ($RequireModel -and $task.output.StartsWith('[DEMO')) { throw 'Expected real batch inference.' }
 }
 $runtime = Invoke-RestMethod "$BaseUrl/api/runtime" -Headers $headers
-if ($RequireModel -and $runtime.mode -ne 'OLLAMA') { throw 'Runtime is not configured for real inference.' }
+if ($RequireModel -and $runtime.mode -notin @('OLLAMA', 'CODEX_CLI')) { throw 'Runtime is not configured for real inference.' }
 $evaluation = Invoke-RestMethod "$BaseUrl/api/evaluations/config" -Headers $headers
 if ($evaluation.mode -notin @('OFF', 'SHADOW')) { throw 'Invalid evaluation configuration.' }
 $history = Invoke-RestMethod "$BaseUrl/api/tasks/$($finished.tasks[0].taskId)/evaluations" -Headers $headers

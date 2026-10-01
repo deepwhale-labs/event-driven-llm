@@ -4,7 +4,7 @@
 
 프롬프트를 접수한 뒤 처리 상태·결과·재시도까지 관리하는 비동기 LLM 실행 콘솔입니다. Kafka로 작업을 분배하고 PostgreSQL에 실행 기록을 보존하며, Coral의 대화를 읽어 작성 → 검토 → 수정을 이어갑니다. 웹에서 개별·일괄 실행, 단계별 결과, 현재 Kafka 연결 관계를 확인할 수 있습니다.
 
-**Java 21 · Spring Boot · Kafka · PostgreSQL · Coral Protocol · 선택적 Ollama**
+**Java 21 · Spring Boot · Kafka · PostgreSQL · Coral Protocol · Ollama / Codex CLI**
 
 [실행](#실행) · [화면](#화면) · [구조](#구조) · [작업 API](#작업-api) · [실제 LLM](#실제-llm) · [개발·검증](#개발검증)
 
@@ -67,7 +67,7 @@ flowchart LR
     API --> DB[(PostgreSQL: 작업 + 전송 대기)]
     DB --> Publisher[Outbox 전송]
     Publisher --> Commands[(Kafka commands)]
-    Commands --> Worker[DEMO / Ollama Worker]
+    Commands --> Worker[DEMO / Ollama / Codex CLI Worker]
     Worker --> DB
     Publisher --> Results[(Kafka results)]
     Results --> Notifier[Coral 전달]
@@ -93,7 +93,7 @@ flowchart LR
 | 재처리 | 단계별 수동·자동 재시도, 처리권 만료 복구, 이전 시도 결과 차단 |
 | 노드 라우팅 | 자동 배정 또는 등록된 Worker 지정 |
 | Kafka 시각화 | 토픽·그룹 자동 발견, 개별 Consumer와 파티션 할당의 동적 연결도 |
-| 모델 | 기본 DEMO, 선택적으로 Ollama 실제 추론 |
+| 모델 | 기본 DEMO, 선택적으로 Ollama 또는 Windows Codex CLI 실제 추론 |
 | 접근 제어·검증 | 선택적 API 키, 메트릭, 단위·DB·실제 서비스 검증 |
 
 입력은 **프롬프트 개별 접수 또는 최대 50개 일괄 접수**를 지원합니다. 파일 업로드, 업무 시스템 자동 수집, 작업 취소와 사용자별 계정은 아직 구현하지 않았습니다. 웹 화면은 한국어이며 영문 README는 실행·개발 안내를 제공합니다.
@@ -193,6 +193,25 @@ DB에는 프롬프트·결과·상태가 남습니다. **Coral 자체의 세션�
 
 ## 실제 LLM
 
+### Codex CLI — Windows 로그인 사용
+
+Windows에 **Python 3.11+와 Codex CLI**, Docker Desktop이 필요합니다. `codex login`으로 ChatGPT 계정에 로그인한 뒤 실행합니다. 모델명은 기존 Codex 설정에서 읽거나 `-Model`로 지정합니다.
+
+```powershell
+.\scripts\start-codex.ps1
+# 모델을 직접 지정하려면: .\scripts\start-codex.ps1 -Model gpt-6-astra
+```
+
+웹·Kafka·PostgreSQL·Coral과 Consumer는 Docker에서 실행하고, Windows 보조 프로세스가 공식 [`codex exec`](https://learn.chatgpt.com/docs/non-interactive-mode)를 호출합니다. 별도 OpenAI API 키는 사용하지 않습니다. 기존 CLI 로그인은 CLI가 직접 사용하며 로그인 파일을 Docker로 복사하지 않습니다. 로컬 연결에만 쓰는 임의 토큰과 실행 설정은 Git에서 제외된 `build/codex-bridge`에 저장합니다.
+
+단일·일괄·작성/검토/수정·비교 모두 같은 CLI 연결을 사용합니다. 콘솔에는 `CODEX_CLI`와 모델명이 표시되며, 이전 Ollama 협업 기록의 모델명은 보존합니다. 한 번에 CLI 하나를 실행하고 5분이 지나면 종료합니다. 연결 끊김·인증 실패·시간 초과는 기존 실패·재시도 경로로 처리하며 모의 응답으로 대체하지 않습니다. CLI 내부의 모델 요청 재전송 횟수는 별도로 집계하지 않습니다.
+
+보조 프로세스는 `127.0.0.1:18081`에서 실행하며 앱은 Docker Desktop의 `host.docker.internal`로 연결합니다. PC를 재시작했다면 위 명령을 다시 실행합니다. 실행 로그는 `build/codex-bridge/runs`에 남습니다. 프로세스 ID는 시작 메시지에 표시되며, 모델을 변경하려면 실행 중인 작업이 끝난 뒤 기존 보조 프로세스를 종료하고 다시 시작합니다.
+
+CLI는 읽기 전용 환경에서 텍스트 답변을 생성하며 셸·파일 수정·웹 검색 도구를 사용하지 않습니다. 기존 Codex 사용자 설정은 자동 작업에 로드하지 않고, 지정 모델과 `medium` 추론 수준을 사용합니다. CLI 계정 사용량이 적용되며 실제 장소·가격 등의 최신 사실 확인은 별도 검색 연동이 필요합니다. Claude CLI와 역할별 모델 선택은 아직 구현하지 않았습니다.
+
+### Ollama — 로컬 모델
+
 ```powershell
 docker compose --profile llm up -d ollama
 docker compose exec ollama ollama pull llama3.2:1b
@@ -254,7 +273,7 @@ flowchart TD
 
 각 단계는 기존 Kafka command/result 토픽과 PostgreSQL 작업·Outbox를 사용합니다. 결과를 Coral에 전달하고 다음 역할이 `coral://state`를 읽은 뒤, 읽은 대화로 다음 입력을 만들어 새 작업을 접수합니다. 전달 완료와 다음 작업 접수는 한 DB 트랜잭션으로 커밋합니다. Coral 읽기에 실패하면 다음 단계로 넘어가지 않습니다.
 
-`writer`와 `reviewer`는 별도 Coral 에이전트 이름이지만, 현재는 같은 Java 앱이 역할을 실행하며 같은 Ollama 모델을 호출합니다. 고정된 3단계 흐름이며 에이전트가 자율적으로 도구나 실행 순서를 결정하는 구조는 아닙니다. Jev 키는 필요하지 않습니다. Jev의 선택적 결과 평가는 이 협업과 별도 기능입니다.
+`writer`와 `reviewer`는 별도 Coral 에이전트 이름이지만, 현재는 같은 Java 앱이 역할을 실행하며 같은 Ollama 또는 Codex CLI 모델을 호출합니다. 고정된 3단계 흐름이며 에이전트가 자율적으로 도구나 실행 순서를 결정하는 구조는 아닙니다. Jev 키는 필요하지 않습니다. Jev의 선택적 결과 평가는 이 협업과 별도 기능입니다.
 
 화면에서 초안·검토 의견·수정본, 실제 역할 지시와 입력, 모델 실행 시도 횟수와 추론 누적 시간을 확인합니다. 새 초안은 정상 경로에서 3회, 제공 초안은 2회 모델을 실행합니다. 횟수는 앱이 시작한 실행 시도 기준이며, 실패한 시도도 포함합니다. SDK 내부 재전송·토큰 사용량·비용 금액은 집계하지 않습니다. 프로세스가 중간에 종료된 호출은 소요 시간 집계가 누락될 수 있습니다.
 
@@ -268,7 +287,7 @@ flowchart TD
 | `POST /api/workflows/{id}/retry` | 마지막 실패 단계부터 재접수 · `202` |
 
 ```powershell
-# 실제 Ollama로 오류 초안 3개, 정상 초안 1개, 신규 생성 1개를 실행하고 기록
+# 설정된 실제 모델로 오류 초안 3개, 정상 초안 1개, 신규 생성 1개를 실행하고 기록
 .\scripts\workflow.ps1
 ```
 
@@ -331,6 +350,8 @@ flowchart TD
 | `APP_PORT` / `KAFKA_PORT` | `18080` / `9092` · localhost 바인딩 |
 | `OLLAMA_PORT` | `11434` · 선택적 Ollama 컨테이너의 호스트 포트 |
 | `OLLAMA_MODEL` / `OLLAMA_NUM_PREDICT` | `llama3.2:1b` / `512` · 모델명 / 응답 토큰 상한 |
+| `INFERENCE_PROVIDER` | 기본 Spring AI 설정 사용 · `none`, `ollama`, `codex-cli` |
+| `CLI_MODEL` / `CLI_BRIDGE_URL` / `CLI_BRIDGE_TOKEN` | 시작 스크립트가 설정 · 모델명 / 로컬 연결 주소 / 로컬 연결 인증 토큰 |
 | `JEV_MODE` / `TYPESAFE_API_KEY` | `off` / 빈 값 · `shadow`로 평가 기록 활성화, 서버 전용 API 키 |
 | `JEV_MODEL` / `JEV_CONFIDENCE_THRESHOLD` | `jev-1.13.0` / `0.85` · 평가 모델 / 초기 판정 기준 |
 | `JEV_ENDPOINT` / `JEV_TIMEOUT_MS` | 공식 `/v1/systemone` HTTPS 주소 / `15000` · HTTP 호출 주소 / 타임아웃 |
@@ -352,7 +373,9 @@ API 키를 설정한 경우 콘솔의 **연결 설정**에서 입력합니다. �
 
 | 검증 | 결과 |
 | --- | --- |
-| `test bootJar` | 59개 통과 · 외부 서비스 선택 테스트 2개 제외 · 빌드 성공 |
+| `test bootJar` | 63개 통과 · 외부 서비스 선택 테스트 2개 제외 · 빌드 성공 |
+| Codex CLI 연결부 | Python 테스트 6개 통과 · 인증, UTF-8, 실패 응답, 시간 초과·프로세스 종료 검증 |
+| Codex CLI 실제 실행 | `gpt-6-astra`로 단일·일괄·비교·3단계 협업 총 9회 실행, 결과 저장·Coral 전달·웹/모바일 표시 확인 |
 | 실제 서비스 연동 | Ollama → 결과 저장 → Kafka → Coral, 노드 라우팅·일괄 접수·시간 기록 통과 |
 | 브라우저 | 실제 실행·협업·Kafka 조회, 390/768/1024/1440px 표시 확인 |
 | UI 모의 응답 검증 | 단일·일괄 요청, 실패 재시도, 평가 이력, API 키, 동적 그래프 변경·복구 통과 |
@@ -362,6 +385,9 @@ API 키를 설정한 경우 콘솔의 **연결 설정**에서 입력합니다. �
 ```powershell
 # JDK 21
 .\gradlew.bat test bootJar
+
+# CLI 프로세스 대역을 이용한 로컬 연결부 검사 (모델 호출 없음)
+python -m unittest discover -s scripts -p test_codex_bridge.py
 
 # 실행 중인 Ollama로 모델 연동 테스트 (DB는 H2, Coral 전달은 테스트 대역)
 .\gradlew.bat test '-PverifyOllama=true' '-PollamaUrl=http://localhost:11434' '-PollamaModel=llama3.2:1b'
@@ -397,7 +423,7 @@ docker compose --profile llm down
 ## 다음 작업
 
 * 실제 Jev 키와 한국어 평가 데이터로 판정 정확도·오탐·비용을 측정한 뒤 경로 추천·승인·재처리 정책 추가.
-* 실제 업무에 맞는 Ollama 모델을 선택하고 응답 품질·처리시간 측정.
+* 실제 업무에 맞는 모델을 선택하고 Ollama·Codex CLI의 응답 품질·처리시간 비교.
 * 파일 업로드를 통한 일괄 등록과 결과 내보내기.
 * 다중 Worker 부하 테스트, 대기시간·처리량·실패 원인 표시 강화.
 * 작업 검색·페이지 이동·대기 작업 취소.

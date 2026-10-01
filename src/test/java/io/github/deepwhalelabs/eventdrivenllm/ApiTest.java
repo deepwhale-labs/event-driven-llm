@@ -21,7 +21,7 @@ class ApiTest {
         tasks = mock(TaskStore.class);
         var routing = new Routing("commands", "results", "one", "one,two");
         mvc = MockMvcBuilders.standaloneSetup(new CommandController(tasks), new TaskController(tasks, routing),
-                new ResultController(mock(CoralClient.class), tasks), new RuntimeController("ollama", "test-model", 256))
+                new ResultController(mock(CoralClient.class), tasks), new RuntimeController(new InferenceConfig("ollama", "test-model", 256, "")))
                 .addFilters(new ApiKeyFilter("test-key")).build();
     }
 

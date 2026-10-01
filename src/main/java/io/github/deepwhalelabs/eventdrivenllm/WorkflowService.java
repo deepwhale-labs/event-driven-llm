@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.UUID;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -26,15 +25,14 @@ public class WorkflowService {
 
     public WorkflowService(JdbcTemplate jdbc, PlatformTransactionManager transactions, TaskStore tasks,
             CoralClient coral, CoralWorkflowClient conversation, ObjectMapper mapper,
-            @Value("${spring.ai.model.chat}") String mode,
-            @Value("${spring.ai.ollama.chat.options.model}") String model) {
+            InferenceConfig config) {
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(transactions);
         this.tasks = tasks;
         this.coral = coral;
         this.conversation = conversation;
         this.mapper = mapper;
-        this.model = mode.equals("none") ? "DEMO" : model;
+        this.model = config.model();
     }
 
     public Workflow create(String prompt, String targetNode, String initialDraft) {

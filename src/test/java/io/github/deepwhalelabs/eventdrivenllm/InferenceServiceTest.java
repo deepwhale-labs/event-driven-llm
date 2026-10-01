@@ -24,14 +24,14 @@ class InferenceServiceTest {
             return new org.springframework.ai.chat.model.ChatResponse(java.util.List.of(new org.springframework.ai.chat.model.Generation(
                     new org.springframework.ai.chat.messages.AssistantMessage("feedback"))));
         });
-        assertThat(new InferenceService(provider, "ollama").generate("review this answer", "request and draft")).isEqualTo("feedback");
+        assertThat(new InferenceService(provider, config("ollama"), null).generate("review this answer", "request and draft")).isEqualTo("feedback");
     }
     @Test
     void demoWorksWithoutModelAndLabelsItsOutput() {
         var provider = new StaticListableBeanFactory().getBeanProvider(ChatModel.class);
-        assertThat(new InferenceService(provider, "none").generate("hello")).startsWith("[DEMO - no model inference]");
-        assertThatThrownBy(() -> new InferenceService(provider, "ollama")).isInstanceOf(RuntimeException.class);
-        assertThatThrownBy(() -> new InferenceService(provider, "typo")).isInstanceOf(IllegalArgumentException.class);
+        assertThat(new InferenceService(provider, config("none"), null).generate("hello")).startsWith("[DEMO - no model inference]");
+        assertThatThrownBy(() -> new InferenceService(provider, config("ollama"), null)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> config("typo")).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
@@ -39,7 +39,23 @@ class InferenceServiceTest {
         ChatModel model = mock(ChatModel.class);
         when(model.call("hello")).thenThrow(new IllegalStateException("offline"));
         var provider = new StaticListableBeanFactory(java.util.Map.of("model", model)).getBeanProvider(ChatModel.class);
-        assertThatThrownBy(() -> new InferenceService(provider, "ollama").generate("hello"))
+        assertThatThrownBy(() -> new InferenceService(provider, config("ollama"), null).generate("hello"))
                 .isInstanceOf(IllegalStateException.class).hasMessage("offline");
     }
+
+    @Test
+    void codexUsesCliWithoutOllamaAndNeverFallsBackOnFailure() {
+        var cli = mock(CodexCliClient.class);
+        var service = new InferenceService(new StaticListableBeanFactory().getBeanProvider(ChatModel.class), config("codex-cli"), cli);
+        when(cli.generate("review", "draft")).thenReturn("correct it");
+        when(cli.generate(null, "hello")).thenThrow(new IllegalStateException("CLI offline"));
+        assertThat(service.generate("review", "draft")).isEqualTo("correct it");
+        assertThatThrownBy(() -> service.generate("hello")).hasMessage("CLI offline");
+        var runtime = new RuntimeController(config("codex-cli")).runtime();
+        assertThat(runtime.mode()).isEqualTo("CODEX_CLI");
+        assertThat(runtime.model()).isEqualTo("Codex CLI / fixture-cli");
+        assertThat(runtime.maxOutputTokens()).isNull();
+    }
+
+    private static InferenceConfig config(String provider) { return new InferenceConfig(provider, "test-model", 256, "fixture-cli"); }
 }

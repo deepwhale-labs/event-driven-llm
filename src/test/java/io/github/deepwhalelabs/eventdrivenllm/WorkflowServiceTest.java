@@ -41,7 +41,7 @@ class WorkflowServiceTest {
         coral = mock(CoralWorkflowClient.class);
         when(coral.exchange(anyString(), anyList(), anyString())).thenAnswer(call ->
                 new CoralWorkflowClient.Conversation(thread, call.getArgument(2), List.copyOf(call.getArgument(1))));
-        workflows = new WorkflowService(jdbc, tx, tasks, mock(CoralClient.class), coral, mapper, "ollama", "fixture-model");
+        workflows = new WorkflowService(jdbc, tx, tasks, mock(CoralClient.class), coral, mapper, new InferenceConfig("ollama", "fixture-model", 256, ""));
         experiments = new ExperimentService(jdbc, tx, workflows);
         model = mock(InferenceService.class);
         worker = new LlmCommandConsumer(model, mapper, tasks, routing, workflows);

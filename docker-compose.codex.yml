@@ -1,0 +1,9 @@
+# Run the native Codex CLI bridge on the Windows host with scripts/start-codex.ps1.
+services:
+  app:
+    environment:
+      SPRING_AI_MODEL_CHAT: none
+      INFERENCE_PROVIDER: codex-cli
+      CLI_BRIDGE_URL: ${CLI_BRIDGE_URL:-http://host.docker.internal:18081}
+      CLI_BRIDGE_TOKEN: ${CLI_BRIDGE_TOKEN:?Start scripts/start-codex.ps1 first}
+      CLI_MODEL: ${CLI_MODEL:?Start scripts/start-codex.ps1 first}

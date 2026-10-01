@@ -172,7 +172,7 @@ async function connect(){
   try{
     const [nodes,info,assessment]=await Promise.all([api('/api/nodes'),api('/api/runtime'),api('/api/evaluations/config')]);runtime=info;jev=assessment;
     const select=$('node'),previous=select.value;select.replaceChildren(new Option('자동 배정',''));nodes.forEach(n=>select.add(new Option(n,n)));if(nodes.includes(previous))select.value=previous;
-    const box=$('modelInfo');box.replaceChildren(element('span',info.mode,'badge'),element('span',info.mode==='DEMO'?'모의 응답':`${info.model} · 최대 ${info.maxOutputTokens} tokens`));
+    const box=$('modelInfo');box.replaceChildren(element('span',info.mode,'badge'),element('span',info.mode==='DEMO'?'모의 응답':`${info.model}${info.maxOutputTokens==null?'':` · 최대 ${info.maxOutputTokens} tokens`}`));
     $('runtimeModel').textContent=info.mode==='DEMO'?'DEMO · 모의 응답':info.model;
     $('jevInfo').textContent=jev.available?'Jev · 활성':'Jev · 비활성';$('jevInfo').title=jev.available?jev.model:!jev.configured?'Jev API 키 미설정':'Jev 평가 꺼짐';
     connection(true);validateInput();await refresh();if(!$('kafkaPanel').hidden)await refreshKafka();return true;

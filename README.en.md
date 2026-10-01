@@ -4,7 +4,7 @@
 
 An asynchronous LLM execution console for submitting prompts, tracking results, and retrying failed work. Kafka distributes jobs, PostgreSQL preserves execution records, and Coral carries the conversation between draft, review, and revision stages. The web console brings together single and batch execution, stage comparisons, and the current Kafka topology.
 
-**Java 21 · Spring Boot · Kafka · PostgreSQL · Coral Protocol · Optional Ollama**
+**Java 21 · Spring Boot · Kafka · PostgreSQL · Coral Protocol · Ollama / Codex CLI**
 
 [Run locally](#run-locally) · [Screenshots](#screenshots) · [Architecture](#architecture) · [Job API](#job-api) · [Real LLM](#real-model-inference) · [Development and verification](#development-and-verification)
 
@@ -67,7 +67,7 @@ flowchart LR
     API --> DB[(PostgreSQL: jobs + outbox)]
     DB --> Publisher[Outbox publisher]
     Publisher --> Commands[(Kafka commands)]
-    Commands --> Worker[DEMO / Ollama worker]
+    Commands --> Worker[DEMO / Ollama / Codex CLI worker]
     Worker --> DB
     Publisher --> Results[(Kafka results)]
     Results --> Notifier[Coral delivery]
@@ -93,7 +93,7 @@ Kafka buffers incoming work for workers to process. Multiple workers and partiti
 | Recovery | Stage-aware manual/automatic retries, expired processing lease recovery, stale attempt fencing |
 | Worker routing | Automatic assignment or a registered target worker |
 | Kafka visualization | Topic/group discovery and a dynamic graph of individual consumers and actual assignments |
-| Inference | DEMO by default; optional real Ollama inference |
+| Inference | DEMO by default; optional Ollama or Windows Codex CLI inference |
 | Access and verification | Optional API key, metrics, unit/database/live-service checks |
 
 The input flow supports **single prompts or batches of up to 50 prompts**. File uploads, automatic business-data ingestion, cancellation, and per-user accounts are not implemented. The web interface is currently in Korean; this README provides English setup and development instructions.
@@ -193,6 +193,25 @@ Prompts, results, and job states are stored in PostgreSQL. **Coral sessions and 
 
 ## Real model inference
 
+### Codex CLI — use the Windows login
+
+Requires **Python 3.11+, Codex CLI and Docker Desktop** on Windows. Sign in to ChatGPT with `codex login`, then run:
+
+```powershell
+.\scripts\start-codex.ps1
+# Explicit model: .\scripts\start-codex.ps1 -Model gpt-6-astra
+```
+
+The model is read from the native Codex configuration unless `-Model` is supplied. The web app, Kafka, PostgreSQL, Coral and Consumer remain in Docker; a Windows helper runs official [`codex exec`](https://learn.chatgpt.com/docs/non-interactive-mode). No separate OpenAI API key is used. The CLI owns authentication; login files are not copied into Docker. A separate random token authenticates local app-to-helper requests. Settings and run logs live under the Git-ignored `build/codex-bridge` directory.
+
+Single jobs, batches, workflows and comparisons all use this connection. The console displays `CODEX_CLI` and the model; historical Ollama workflow records retain their model labels. One CLI process runs at a time with a five-minute timeout. Connection, login and CLI failures use the existing failure/retry path without falling back to DEMO. Internal CLI model-request retries are not counted separately.
+
+The helper binds to `127.0.0.1:18081`, reached from Docker Desktop through `host.docker.internal`. Run the start command again after rebooting. Its PID is printed at startup; finish active work and stop the old helper before selecting another model. Logs are stored in `build/codex-bridge/runs`.
+
+Runs use a read-only sandbox with shell, file editing and web search disabled. User Codex configuration is not loaded into automation; the chosen model uses `medium` reasoning. CLI account usage limits apply. Current business details, prices and other live facts still need a separate retrieval integration. Claude CLI and per-role model selection are not implemented yet.
+
+### Ollama — local model
+
 ```powershell
 docker compose --profile llm up -d ollama
 docker compose exec ollama ollama pull llama3.2:1b
@@ -245,7 +264,7 @@ Open **새 실행** (New execution) and choose **작성 → 검토 → 수정**.
 
 Each stage reuses the Kafka command/result topics and durable task/outbox records. After publishing the stage output, the next role reads its own `coral://state` MCP resource. That conversation becomes the next task's input. Delivery completion and next-task creation commit together. A failed Coral read does not silently fall back to DB context.
 
-Coral identifies the roles as `writer` and `reviewer`. The Java application runs both roles using the same configured Ollama model and a fixed three-stage sequence. These are not autonomous agents choosing tools or execution order. Jev is a separate optional evaluation feature and is not required for this flow.
+Coral identifies the roles as `writer` and `reviewer`. The Java application runs both roles using the same configured Ollama or Codex CLI model and a fixed three-stage sequence. These are not autonomous agents choosing tools or execution order. Jev is a separate optional evaluation feature and is not required for this flow.
 
 The comparison panel shows the draft, review, revision, saved system instructions and user inputs, model execution attempts and cumulative inference time. A new draft normally requires three model executions; a supplied draft requires two. Counts include app-level failed attempts, but not SDK-internal retries, tokens or monetary cost. A process crash can leave the interrupted call's duration unrecorded.
 
@@ -258,7 +277,7 @@ Delivery retries reuse saved output. Inference retries restart only the failed s
 | `GET /api/workflows/{id}` | State, input snapshots, outputs, timings and model execution attempts |
 | `POST /api/workflows/{id}/retry` | Retry the last failed stage; returns `202` |
 
-Run `.\scripts\workflow.ps1` with real Ollama to record three incorrect drafts, one correct control and one newly generated draft in `build/workflow-live-result.json`. **Completed collaboration does not certify answer quality.** The same small model can approve an incorrect answer or degrade a correct one. Review the recorded outputs before adopting the flow for a workload.
+Run `.\scripts\workflow.ps1` with a configured real model to record three incorrect drafts, one correct control and one newly generated draft in `build/workflow-live-result.json`. **Completed collaboration does not certify answer quality.** A model can approve an incorrect answer or degrade a correct one. Review the recorded outputs before adopting the flow for a workload.
 
 ## Review-effect comparison
 
@@ -319,6 +338,8 @@ Topics created by the app default to two partitions and one replica. Within a co
 | `APP_PORT` / `KAFKA_PORT` | `18080` / `9092`, bound to localhost |
 | `OLLAMA_PORT` | `11434`, host port of the optional Ollama container |
 | `OLLAMA_MODEL` / `OLLAMA_NUM_PREDICT` | `llama3.2:1b` / `512`, model name / output token cap |
+| `INFERENCE_PROVIDER` | Defaults to Spring AI configuration; `none`, `ollama`, or `codex-cli` |
+| `CLI_MODEL` / `CLI_BRIDGE_URL` / `CLI_BRIDGE_TOKEN` | Set by the start script: model / local bridge URL / local authentication token |
 | `JEV_MODE` / `TYPESAFE_API_KEY` | `off` / empty; set `shadow` to record judgments; server-only API key |
 | `JEV_MODEL` / `JEV_CONFIDENCE_THRESHOLD` | `jev-1.13.0` / `0.85`, model / initial decision threshold |
 | `JEV_ENDPOINT` / `JEV_TIMEOUT_MS` | Official `/v1/systemone` HTTPS URL / `15000`, HTTP endpoint / timeout |
@@ -340,7 +361,9 @@ Includes comparison-feature verification on October 1, 2026. Passing execution c
 
 | Check | Result |
 | --- | --- |
-| `test bootJar` | 59 passed; 2 opt-in external-service tests skipped; build passed |
+| `test bootJar` | 63 passed; 2 opt-in external-service tests skipped; build passed |
+| Codex CLI bridge | 6 Python tests passed: authentication, UTF-8, failures, timeouts and process termination |
+| Live Codex CLI | 9 executions with `gpt-6-astra`: single/batch jobs, comparison and three-stage workflow; persistence, Coral delivery and desktop/mobile UI verified |
 | Live integration | Ollama, saved results, Kafka and Coral delivery; routing, batches and timings passed |
 | Browser | Live executions, workflows and Kafka; layouts at 390/768/1024/1440px verified |
 | UI with mocked responses | Single/batch submission, retries, evaluation history, API keys, dynamic graph changes and recovery passed |
@@ -350,6 +373,9 @@ Includes comparison-feature verification on October 1, 2026. Passing execution c
 ```powershell
 # Requires JDK 21 for local builds
 .\gradlew.bat test bootJar
+
+# Native CLI process fixtures; no model calls
+python -m unittest discover -s scripts -p test_codex_bridge.py
 
 # Optional model test against a running Ollama server
 # Uses H2 for the database and a test double for Coral delivery
@@ -388,7 +414,7 @@ docker compose --profile llm down
 ## Next steps
 
 * Validate real Jev judgments, false positives and cost on Korean examples before adding route recommendations and approval/retry policies.
-* Select an Ollama model for the intended workload and measure output quality and latency.
+* Compare Ollama and Codex CLI output quality and latency for the intended workload.
 * Add file uploads for batch submission and result export.
 * Load-test multiple workers and improve queue-time, throughput, and failure diagnostics.
 * Add job search, pagination, and queued-job cancellation.

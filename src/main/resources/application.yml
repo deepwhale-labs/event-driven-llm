@@ -43,6 +43,12 @@ spring:
           num-predict: ${OLLAMA_NUM_PREDICT:512}
 
 app:
+  inference:
+    provider: ${INFERENCE_PROVIDER:${spring.ai.model.chat}}
+    cli:
+      url: ${CLI_BRIDGE_URL:http://host.docker.internal:18081}
+      token: ${CLI_BRIDGE_TOKEN:}
+      model: ${CLI_MODEL:}
   node-id: ${APP_NODE_ID:local-worker-1}
   worker-nodes: ${WORKER_NODES:local-worker-1}
   worker-enabled: ${WORKER_ENABLED:true}

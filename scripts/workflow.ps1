@@ -12,7 +12,7 @@ function Read-WorkflowJson([string]$Uri) {
     return [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()) | ConvertFrom-Json
 }
 $runtime = Invoke-RestMethod -Uri "$BaseUrl/api/runtime" -Headers $headers
-if ($runtime.mode -ne 'OLLAMA') { throw 'This experiment requires a real Ollama model.' }
+if ($runtime.mode -notin @('OLLAMA', 'CODEX_CLI')) { throw 'This experiment requires a real model.' }
 $cases = @(
     @{ name='product-label'; prompt='다음 문의를 배송, 환불, 상품 중 정확히 한 단어로 분류하세요: 이 가방은 방수가 되나요?'; initialDraft='배송'; expected='상품' },
     @{ name='negative-review'; prompt='다음 리뷰의 감정을 긍정, 부정, 중립 중 정확히 한 단어로 분류하세요: 제품이 고장 나서 사용할 수 없습니다.'; initialDraft='긍정'; expected='부정' },
