@@ -77,3 +77,11 @@ CREATE TABLE IF NOT EXISTS workflow_steps (
     PRIMARY KEY(workflow_id,stage)
 );
 ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS system_prompt TEXT;
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS mode VARCHAR(16) NOT NULL DEFAULT 'REVIEW';
+CREATE TABLE IF NOT EXISTS workflow_experiments (
+    experiment_id VARCHAR(36) PRIMARY KEY,
+    expected_output TEXT,
+    direct_workflow_id VARCHAR(36) NOT NULL UNIQUE REFERENCES workflows(workflow_id),
+    review_workflow_id VARCHAR(36) NOT NULL UNIQUE REFERENCES workflows(workflow_id),
+    created_at BIGINT NOT NULL
+);

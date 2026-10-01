@@ -109,7 +109,7 @@ docker compose up --build -d
 .\scripts\smoke.ps1
 ```
 
-**Console: http://localhost:18080** — use the sidebar to switch between executions (**실행**), collaboration (**협업**), and Kafka. The execution list and result inspector sit side by side, with prompts and execution metadata in a disclosure. Navigation moves to the top on mobile. Counts summarize the currently displayed execution list.
+**Console: http://localhost:18080** — use the sidebar to switch between executions (**실행**), collaboration (**협업**), comparisons (**비교**), and Kafka. The execution list and result inspector sit side by side, with prompts and execution metadata in a disclosure. Navigation moves to the top on mobile. Counts summarize the currently displayed execution list.
 
 Open **새 실행** (New execution) to choose a prompt, worker, and execution mode. The form shows the configured DEMO/real-model mode and model name. Choose **일괄 실행** (batch mode) and separate prompts with a line containing `---`. **예시 넣기** fills ten sample prompts without submitting them. Each prompt is limited to 32,000 characters, with a total of 256,000 characters per batch. Validation or persistence failures reject the whole batch. Submit with Ctrl+Enter or ⌘+Enter; close the dialog with Esc.
 
@@ -260,6 +260,50 @@ Delivery retries reuse saved output. Inference retries restart only the failed s
 
 Run `.\scripts\workflow.ps1` with real Ollama to record three incorrect drafts, one correct control and one newly generated draft in `build/workflow-live-result.json`. **Completed collaboration does not certify answer quality.** The same small model can approve an incorrect answer or degrade a correct one. Review the recorded outputs before adopting the flow for a workload.
 
+## Review-effect comparison
+
+Choose **새 실행 → 검토 효과 비교** (New execution → Compare review effect), then enter a request and a **common draft**. The **비교** view shows final answers, model execution attempts, inference duration, and total duration side by side.
+
+| Arm | Stages | Additional model executions on the normal path |
+| --- | --- | --- |
+| Direct rewrite | Supplied draft → revision | 1 |
+| Review then revise | Supplied draft → review → revision | 2 |
+
+Both arms use the same revision instructions; only the review arm receives a review message. The draft is supplied once and copied to independent workflows and Coral threads. Both workflows are accepted in one database transaction. Retrying a failed arm does not rerun the completed arm. Use **단계 상세** (Stage details) to inspect the saved prompts and Coral context.
+
+An optional **expected answer** is used only for scoring and is never sent to the model. Matching is case-sensitive and exact after stripping surrounding whitespace; punctuation and internal spacing are preserved. Semantically equivalent wording does not automatically pass. `matchesExpected` is `null` when no expected answer is supplied or an arm has not completed successfully. Execution failures are not scored as incorrect answers. The request, draft, and expected answer are each limited to 8,000 characters.
+
+![Actual Ollama direct-rewrite and review-then-revise results, exact matches and execution counts](docs/images/console-comparison.png)
+
+This comparison screenshot was captured from the local Docker app on 2026-10-01. The earlier gallery was captured on 2026-09-30.
+
+| API | Behavior |
+| --- | --- |
+| `POST /api/experiments` | Accept `prompt`, `initialDraft`, optional `expectedOutput` and `targetNode`; returns `202` |
+| `GET /api/experiments?limit=10` | Recent experiments; maximum 50 |
+| `GET /api/experiments/{id}` | Common inputs, expected answer, both workflows, scores and timings |
+| `POST /api/workflows/{id}/retry` | Retry the failed arm using its `direct.workflow.workflowId` or `review.workflow.workflowId` |
+
+```powershell
+# Three incorrect drafts and two correct controls, each repeated three times (45 normal-path inference calls)
+.\scripts\compare.ps1 -Repetitions 3
+```
+
+The script pins requests to one worker, defaulting to the first configured node. Override it with `-TargetNode`; `-BaseUrl` and `-ApiKey` are also supported. Individual records go to `build/comparison-live-result.json`; exact-match, correction, preservation, execution-count and timing totals go to `build/comparison-live-summary.json`. Correct drafts that become mismatches remain in the denominator.
+
+Keep model and worker settings constant when comparing. Both arms are submitted together, so total duration includes queue contention and Coral delivery. Exact matches on a small fixed sample are not general accuracy estimates or statistical proof that review helps. Jev evaluation, evaluation-triggered regeneration and semantic topic routing remain separate work.
+
+Observed on 2026-10-01 with `qwen2.5:1.5b`, CPU, a 256-token output cap and the same worker: five cases repeated three times. Both arms completed all 15 workflows without retries.
+
+| Observation | Direct rewrite | Review then revise |
+| --- | --- | --- |
+| Expected-answer matches | 14/15 | 11/15 |
+| Incorrect drafts changed to matching answers | 9/9 | 5/9 |
+| Correct drafts kept matching | 5/6 | 6/6 |
+| Model execution attempts | 15 | 30 |
+
+All 15 reviews said no revision was needed. Direct rewriting produced more matches overall, while review preserved more correct drafts; this sample did not establish a consistent benefit from review. The first direct inference alone took about 63.5 seconds. Model readiness and execution order were not controlled, so cumulative durations should not be used to rank the approaches by speed.
+
 ## Worker routing and scaling
 
 Configure the same allowed node list on every app, for example `WORKER_NODES=local-worker-1,local-worker-2`, and give each instance a distinct `APP_NODE_ID`. Instances must share PostgreSQL, Kafka, and the Coral runtime volume. Give additional instances separate host app ports.
@@ -292,15 +336,16 @@ The default stack has one Kafka broker and one PostgreSQL instance. An externall
 
 ## Development and verification
 
-Local verification as of September 30, 2026. Passing execution checks does not certify model answer quality.
+Includes comparison-feature verification on October 1, 2026. Passing execution checks does not certify model answer quality.
 
 | Check | Result |
 | --- | --- |
-| `test bootJar` | 54 passed; 2 opt-in external-service tests skipped; build passed |
+| `test bootJar` | 59 passed; 2 opt-in external-service tests skipped; build passed |
 | Live integration | Ollama, saved results, Kafka and Coral delivery; routing, batches and timings passed |
 | Browser | Live executions, workflows and Kafka; layouts at 390/768/1024/1440px verified |
 | UI with mocked responses | Single/batch submission, retries, evaluation history, API keys, dynamic graph changes and recovery passed |
 | External Jev API | Not verified without a key; mock HTTP tests completed |
+| Review-effect comparison | 15 real Ollama comparisons / 45 inference calls; isolated Coral threads; mocked UI and 390/768/1440px layouts verified |
 
 ```powershell
 # Requires JDK 21 for local builds

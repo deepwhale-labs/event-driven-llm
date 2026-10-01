@@ -50,4 +50,14 @@ $history = Invoke-RestMethod "$BaseUrl/api/tasks/$($finished.tasks[0].taskId)/ev
 if ($evaluation.PSObject.Properties.Name -contains 'apiKey') { throw 'Evaluation config exposed a credential field.' }
 $topology = Invoke-RestMethod "$BaseUrl/api/kafka/topology" -Headers $headers
 if ($topology.status -ne 'CONNECTED' -or $topology.brokers.Count -lt 1 -or $topology.topics.Count -lt 4) { throw 'Kafka topology unavailable.' }
-Write-Output 'PASS: durable API -> Kafka -> worker -> saved result -> Coral; node routing; atomic batch; timings; runtime; evaluation API; metrics; Kafka topology'
+$body = @{ prompt = 'Reply briefly with hello.'; initialDraft = 'hello'; targetNode = $nodes[0] } | ConvertTo-Json
+$experiment = Invoke-RestMethod -Method Post "$BaseUrl/api/experiments" -Headers $headers -ContentType 'application/json' -Body $body
+$comparison = Wait-Json "$BaseUrl/api/experiments/$($experiment.experimentId)" { param($value) $value.status -in @('SUCCEEDED','FAILED') }
+if ($comparison.status -ne 'SUCCEEDED') { throw 'Comparison execution failed.' }
+if ($comparison.direct.workflow.steps.Count -ne 2 -or $comparison.review.workflow.steps.Count -ne 3) { throw 'Comparison stage count mismatch.' }
+if ($comparison.direct.workflow.inferenceCalls -ne 1 -or $comparison.review.workflow.inferenceCalls -ne 2) { throw 'Comparison unexpectedly repeated inference.' }
+if ($null -ne $comparison.direct.matchesExpected -or $null -ne $comparison.review.matchesExpected) { throw 'Unscored output must not become a match.' }
+if ($comparison.direct.workflow.steps[0].task.output -cne $comparison.review.workflow.steps[0].task.output) { throw 'Comparison drafts differ.' }
+if ($comparison.direct.workflow.steps[-1].sourceReader -ne 'writer' -or $comparison.review.workflow.steps[1].sourceReader -ne 'reviewer') { throw 'Comparison did not read Coral context.' }
+if ($comparison.direct.workflow.steps[-1].task.threadId -eq $comparison.review.workflow.steps[-1].task.threadId) { throw 'Comparison arms share a Coral thread.' }
+Write-Output 'PASS: durable API -> Kafka -> worker -> saved result -> Coral; node routing; atomic batch; timings; runtime; evaluation API; metrics; Kafka topology; isolated direct/review comparison'

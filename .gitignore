@@ -13,6 +13,7 @@
 !/docs/images/console-new-execution.png
 !/docs/images/console-batch.png
 !/docs/images/console-workflow.png
+!/docs/images/console-comparison.png
 !/docs/images/console-kafka.png
 !/docs/images/console-mobile.png
 !/docs/blog/02-kafka-llm-jev.md
@@ -37,6 +38,7 @@
 !/scripts/smoke.ps1
 !/scripts/recovery.ps1
 !/scripts/workflow.ps1
+!/scripts/compare.ps1
 !/.github/workflows/ci.yml
 !/gradle/wrapper/gradle-wrapper.jar
 !/gradle/wrapper/gradle-wrapper.properties

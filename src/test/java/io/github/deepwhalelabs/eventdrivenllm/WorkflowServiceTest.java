@@ -23,6 +23,7 @@ class WorkflowServiceTest {
     private JdbcTemplate jdbc;
     private TaskStore tasks;
     private WorkflowService workflows;
+    private ExperimentService experiments;
     private CoralWorkflowClient coral;
     private InferenceService model;
     private LlmCommandConsumer worker;
@@ -41,6 +42,7 @@ class WorkflowServiceTest {
         when(coral.exchange(anyString(), anyList(), anyString())).thenAnswer(call ->
                 new CoralWorkflowClient.Conversation(thread, call.getArgument(2), List.copyOf(call.getArgument(1))));
         workflows = new WorkflowService(jdbc, tx, tasks, mock(CoralClient.class), coral, mapper, "ollama", "fixture-model");
+        experiments = new ExperimentService(jdbc, tx, workflows);
         model = mock(InferenceService.class);
         worker = new LlmCommandConsumer(model, mapper, tasks, routing, workflows);
         notifier = new CoralResultConsumer(mapper, tasks, workflows);
@@ -150,5 +152,111 @@ class WorkflowServiceTest {
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.steps[0].provided").value(true));
         mvc.perform(get("/api/workflows").header("X-API-Key", "access")).andExpect(status().isOk()).andExpect(jsonPath("$[0].inferenceCalls").value(0));
         mvc.perform(get("/api/workflows?limit=51").header("X-API-Key", "access")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void experimentSharesTheDraftButIsolatesReviewAndDoesNotLeakTheExpectedAnswer() throws Exception {
+        var experiment = experiments.create("request", "same draft", "expected answer", "one");
+        String directId = experiment.direct().workflow().workflowId(), reviewId = experiment.review().workflow().workflowId();
+        assertThat(experiment.draftMatchesExpected()).isFalse();
+        assertThat(experiment.direct().matchesExpected()).isNull();
+        when(model.generate(anyString(), anyString())).thenReturn("expected answer", "review-only feedback", "still wrong");
+        for (String id : List.of(directId, reviewId)) {
+            deliverLast(id);
+            String firstStage = event(workflows.get(id).steps().getFirst().task());
+            notifier.consume(firstStage);
+            while (!workflows.get(id).status().equals("SUCCEEDED")) { infer(last(id).task()); deliverLast(id); }
+        }
+        var result = experiments.get(experiment.experimentId());
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+        assertThat(result.direct().matchesExpected()).isTrue();
+        assertThat(result.review().matchesExpected()).isFalse();
+        assertThat(result.direct().workflow().steps()).extracting(WorkflowService.Step::stage).containsExactly("DRAFT", "REVISION");
+        assertThat(result.direct().workflow().inferenceCalls()).isEqualTo(1);
+        assertThat(result.review().workflow().inferenceCalls()).isEqualTo(2);
+        assertThat(result.direct().elapsedMillis()).isNotNull();
+        var direct = last(directId);
+        var review = last(reviewId);
+        assertThat(direct.sourceReader()).isEqualTo("writer");
+        assertThat(direct.task().prompt()).contains("request", "same draft").doesNotContain("review-only feedback", "expected answer");
+        assertThat(review.task().prompt()).contains("review-only feedback").doesNotContain("expected answer");
+        assertThat(direct.systemPrompt()).isEqualTo(review.systemPrompt());
+        assertThat(result.direct().workflow().steps().getFirst().task().output()).isEqualTo(result.review().workflow().steps().getFirst().task().output());
+        verify(coral, atLeastOnce()).exchange(eq(directId), anyList(), eq("writer"));
+        verify(coral, atLeastOnce()).exchange(eq(reviewId), anyList(), eq("reviewer"));
+        assertThat(experiments.list(10)).hasSize(1);
+    }
+
+    @Test
+    void experimentDeliveryRetryDoesNotRegenerateEitherAnswerAndUnscoredIsNotAMatch() throws Exception {
+        var experiment = experiments.create("request", "draft", null, null);
+        String directId = experiment.direct().workflow().workflowId(), reviewId = experiment.review().workflow().workflowId();
+        when(model.generate(anyString(), anyString())).thenReturn("answer");
+        deliverLast(directId);
+        infer(last(directId).task());
+        doThrow(new CoralException("offline")).when(coral).exchange(eq(directId), anyList(), anyString());
+        assertThatThrownBy(() -> deliverLast(directId)).isInstanceOf(CoralException.class);
+        tasks.fail(last(directId).task().taskId(), 1, "DELIVERY");
+        deliverLast(reviewId);
+        for (int i = 0; i < 2; i++) { infer(last(reviewId).task()); deliverLast(reviewId); }
+        assertThat(experiments.get(experiment.experimentId()).status()).isEqualTo("FAILED");
+        assertThat(experiments.get(experiment.experimentId()).direct().output()).isEqualTo("answer");
+        workflows.retry(directId);
+        doAnswer(call -> new CoralWorkflowClient.Conversation(thread, call.getArgument(2), List.copyOf(call.getArgument(1))))
+                .when(coral).exchange(eq(directId), anyList(), anyString());
+        deliverLast(directId);
+        var complete = experiments.get(experiment.experimentId());
+        assertThat(complete.status()).isEqualTo("SUCCEEDED");
+        assertThat(complete.direct().matchesExpected()).isNull();
+        assertThat(complete.review().matchesExpected()).isNull();
+        verify(model, times(3)).generate(anyString(), anyString());
+    }
+
+    @Test
+    void experimentCreationRollsBackBothWorkflowsWhenTheSecondArmFails() {
+        jdbc.execute("ALTER TABLE workflows ADD CONSTRAINT fixture_mode CHECK (mode='DIRECT')");
+        assertThatThrownBy(() -> experiments.create("request", "draft", null, null)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        for (String table : List.of("workflow_experiments", "workflows", "workflow_steps", "tasks", "outbox")) {
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Integer.class)).isZero();
+        }
+    }
+
+    @Test
+    void experimentApiValidatesInputsAndScoresOnlyExactOutputWithSurroundingWhitespaceRemoved() throws Exception {
+        var mvc = MockMvcBuilders.standaloneSetup(new ExperimentController(experiments)).addFilters(new ApiKeyFilter("access")).build();
+        mvc.perform(post("/api/experiments").servletPath("/api/experiments").contentType("application/json").content("{}"))
+                .andExpect(status().isUnauthorized());
+        for (String body : List.of("{}", "{\"prompt\":\"hello\"}", "{\"prompt\":\"hello\",\"initialDraft\":\"draft\",\"expectedOutput\":\" \"}",
+                "{\"prompt\":\"hello\",\"initialDraft\":\"draft\",\"targetNode\":\"unknown\"}")) {
+            mvc.perform(post("/api/experiments").header("X-API-Key", "access").contentType("application/json").content(body)).andExpect(status().isBadRequest());
+        }
+        assertThat(experiments.list(10)).isEmpty();
+        mvc.perform(post("/api/experiments").header("X-API-Key", "access").contentType("application/json")
+                .content("{\"prompt\":\"request\",\"initialDraft\":\" answer \",\"expectedOutput\":\"answer\"}"))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.draftMatchesExpected").value(true));
+        mvc.perform(get("/api/experiments?limit=0").header("X-API-Key", "access")).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/experiments/" + UUID.randomUUID()).header("X-API-Key", "access")).andExpect(status().isNotFound());
+        var experiment = experiments.list(10).getFirst();
+        when(model.generate(anyString(), anyString())).thenReturn(" answer \n", "feedback", "Answer");
+        String directId = experiment.direct().workflow().workflowId(), reviewId = experiment.review().workflow().workflowId();
+        for (String id : List.of(directId, reviewId)) {
+            deliverLast(id);
+            while (!workflows.get(id).status().equals("SUCCEEDED")) { infer(last(id).task()); deliverLast(id); }
+        }
+        var result = experiments.get(experiment.experimentId());
+        assertThat(result.direct().matchesExpected()).isTrue();
+        assertThat(result.review().matchesExpected()).isFalse();
+    }
+
+    @Test
+    void migrationKeepsOldWorkflowsOnTheReviewPath() {
+        var flow = workflows.create("legacy request", null, "legacy draft");
+        jdbc.execute("ALTER TABLE workflows DROP COLUMN mode");
+        var migration = new ResourceDatabasePopulator(new ClassPathResource("schema.sql"));
+        migration.execute(jdbc.getDataSource());
+        migration.execute(jdbc.getDataSource());
+        var restored = workflows.get(flow.workflowId());
+        assertThat(restored.mode()).isEqualTo("REVIEW");
+        assertThat(restored.steps().getFirst().task().output()).isEqualTo("legacy draft");
     }
 }

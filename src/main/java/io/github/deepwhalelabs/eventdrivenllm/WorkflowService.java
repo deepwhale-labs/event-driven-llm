@@ -38,12 +38,17 @@ public class WorkflowService {
     }
 
     public Workflow create(String prompt, String targetNode, String initialDraft) {
+        return create(prompt, targetNode, initialDraft, "REVIEW");
+    }
+
+    public Workflow create(String prompt, String targetNode, String initialDraft, String mode) {
         validate(prompt);
         if (initialDraft != null) validate(initialDraft);
+        if (!"REVIEW".equals(mode) && !"DIRECT".equals(mode)) throw new IllegalArgumentException("Unknown workflow mode");
         return tx.execute(s -> {
             String id = UUID.randomUUID().toString();
-            jdbc.update("INSERT INTO workflows(workflow_id,prompt,target_node,model,created_at) VALUES (?,?,?,?,?)",
-                    id, prompt, targetNode, model, System.currentTimeMillis());
+            jdbc.update("INSERT INTO workflows(workflow_id,prompt,target_node,model,created_at,mode) VALUES (?,?,?,?,?,?)",
+                    id, prompt, targetNode, model, System.currentTimeMillis(), mode);
             Task draft = initialDraft == null ? tasks.create(prompt, targetNode)
                     : tasks.createProvided(prompt, targetNode, initialDraft);
             step(id, "DRAFT", draft, initialDraft != null, null);
@@ -54,7 +59,7 @@ public class WorkflowService {
     public Workflow get(String id) {
         var definitions = jdbc.query("SELECT * FROM workflows WHERE workflow_id=?", (rs, n) -> new Definition(
                 rs.getString("workflow_id"), rs.getString("prompt"), rs.getString("target_node"),
-                rs.getString("model"), rs.getLong("created_at")), id);
+                rs.getString("model"), rs.getLong("created_at"), rs.getString("mode")), id);
         if (definitions.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Workflow not found");
         Definition definition = definitions.getFirst();
         var steps = jdbc.query("SELECT * FROM workflow_steps WHERE workflow_id=? "
@@ -67,7 +72,7 @@ public class WorkflowService {
                 : last.stage().equals("REVISION") && last.task().status().equals("SUCCEEDED") ? "SUCCEEDED" : "RUNNING";
         return new Workflow(id, definition.prompt(), definition.targetNode(), definition.model(), definition.createdAt(),
                 status, last.stage(), steps.stream().mapToInt(Step::inferenceCalls).sum(),
-                steps.stream().mapToLong(Step::inferenceMillis).sum(), steps);
+                steps.stream().mapToLong(Step::inferenceMillis).sum(), steps, definition.mode());
     }
 
     public List<Workflow> list(int limit) {
@@ -96,11 +101,15 @@ public class WorkflowService {
             validate(saved.output());
             history.add(new CoralWorkflowClient.Message(workflow.workflowId(), saved.taskId(), step.stage(), workflow.prompt(), saved.output()));
         }
-        String next = switch (current.stage()) { case "DRAFT" -> "REVIEW"; case "REVIEW" -> "REVISION"; default -> null; };
+        String next = switch (current.stage()) {
+            case "DRAFT" -> workflow.mode().equals("DIRECT") ? "REVISION" : "REVIEW";
+            case "REVIEW" -> "REVISION";
+            default -> null;
+        };
         String reader = "REVIEW".equals(next) ? "reviewer" : "writer";
         var context = conversation.exchange(workflow.workflowId(), history, reader);
         if (next != null) {
-            String prompt = nextPrompt(next, context.messages());
+            String prompt = nextPrompt(next, workflow.mode(), context.messages());
             Task created = tasks.create(prompt, workflow.targetNode());
             step(workflow.workflowId(), next, created, false, context);
         }
@@ -141,10 +150,10 @@ public class WorkflowService {
         };
     }
 
-    private static String nextPrompt(String stage, List<CoralWorkflowClient.Message> context) {
+    private static String nextPrompt(String stage, String mode, List<CoralWorkflowClient.Message> context) {
         var draft = context.stream().filter(m -> m.stage().equals("DRAFT")).findFirst().orElseThrow();
         String common = "원래 요청:\n" + draft.request() + "\n\n초안:\n" + draft.content();
-        if (stage.equals("REVIEW")) return common;
+        if (stage.equals("REVIEW") || mode.equals("DIRECT")) return common;
         var review = context.stream().filter(m -> m.stage().equals("REVIEW")).findFirst().orElseThrow();
         return common + "\n\n검토 의견:\n" + review.content();
     }
@@ -157,9 +166,9 @@ public class WorkflowService {
     static void validate(String value) {
         if (value == null || value.isBlank() || value.length() > MAX_TEXT) throw new IllegalArgumentException("Workflow text must contain 1 to 8000 characters");
     }
-    private record Definition(String id, String prompt, String targetNode, String model, long createdAt) { }
+    private record Definition(String id, String prompt, String targetNode, String model, long createdAt, String mode) { }
     public record Step(String stage, boolean provided, String sourceThreadId, String sourceReader, String sourceSnapshot,
             int inferenceCalls, long inferenceMillis, String model, String systemPrompt, Task task) { }
     public record Workflow(String workflowId, String prompt, String targetNode, String model, long createdAt, String status,
-            String currentStage, int inferenceCalls, long inferenceMillis, List<Step> steps) { }
+            String currentStage, int inferenceCalls, long inferenceMillis, List<Step> steps, String mode) { }
 }

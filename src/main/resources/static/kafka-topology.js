@@ -203,27 +203,28 @@ async function refreshKafka(){
   finally{topologyBusy=false;$('refreshTopology').disabled=false;}
 }
 function showTab(){
-  const page=location.hash==='#kafka'?'kafka':location.hash==='#flows'?'flow':'work';
-  const url=new URL(location);if(page==='work')url.searchParams.delete('flow');else if(page==='flow'&&activeWorkflow)url.searchParams.set('flow',activeWorkflow);history.replaceState(null,'',url);
-  for(const id of ['work','flow','kafka']){const active=id===page;$(id+'Panel').hidden=!active;$(id+'Tab').setAttribute('aria-selected',String(active));$(id+'Tab').tabIndex=active?0:-1;}
-  const [title,eyebrow]={work:['실행','EXECUTIONS'],flow:['협업','WORKFLOWS'],kafka:['Kafka','INFRASTRUCTURE']}[page];
+  const page=location.hash==='#kafka'?'kafka':location.hash==='#flows'?'flow':location.hash==='#experiments'?'experiment':'work';
+  const url=new URL(location);if(page==='work'){url.searchParams.delete('flow');url.searchParams.delete('experiment');}else if(page==='flow'&&activeWorkflow)url.searchParams.set('flow',activeWorkflow);else if(page==='experiment'&&activeExperiment)url.searchParams.set('experiment',activeExperiment);history.replaceState(null,'',url);
+  for(const id of ['work','flow','experiment','kafka']){const active=id===page;$(id+'Panel').hidden=!active;$(id+'Tab').setAttribute('aria-selected',String(active));$(id+'Tab').tabIndex=active?0:-1;}
+  const [title,eyebrow]={work:['실행','EXECUTIONS'],flow:['협업','WORKFLOWS'],experiment:['비교 실험','EXPERIMENTS'],kafka:['Kafka','INFRASTRUCTURE']}[page];
   $('pageTitle').textContent=title;$('pageCrumb').textContent=title;$('pageEyebrow').textContent=eyebrow;document.title=title+' · Event-driven LLM';
   $('pollLabel').replaceChildren(element('i',''),document.createTextNode(page==='kafka'?'10초마다 갱신':'3초마다 갱신'));
   if(page==='kafka')refreshKafka();else refresh();
 }
 $('workTab').onclick=()=>{location.hash='work';};$('flowTab').onclick=()=>{location.hash='flows';};$('kafkaTab').onclick=()=>{location.hash='kafka';};$('refreshTopology').onclick=refreshKafka;
+$('experimentTab').onclick=()=>{location.hash='experiments';};
 $('graphSearch').oninput=()=>{if(topology)renderGraph();};$('showConfigured').onchange=()=>{if(topology)renderGraph();};
 $('zoomIn').onclick=()=>{graphScale=Math.min(1.5,(graphScale||1)+.1);applyGraphScale();};$('zoomOut').onclick=()=>{graphScale=Math.max(.4,(graphScale||1)-.1);applyGraphScale();};$('zoomFit').onclick=()=>{graphScale=null;applyGraphScale();};
 document.querySelector('.tabs').onkeydown=event=>{
-  const tabs=['work','flow','kafka'];if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
+  const tabs=['work','flow','experiment','kafka'];if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'].includes(event.key))return;
   event.preventDefault();let index=tabs.findIndex(id=>$(id+'Tab')===event.target.closest('[role=tab]'));
-  index=event.key==='Home'?0:event.key==='End'?2:(index+(['ArrowRight','ArrowDown'].includes(event.key)?1:2))%3;
-  location.hash=index===1?'flows':tabs[index];$(tabs[index]+'Tab').focus();
+  index=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(['ArrowRight','ArrowDown'].includes(event.key)?1:tabs.length-1))%tabs.length;
+  location.hash=tabs[index]==='flow'?'flows':tabs[index]==='experiment'?'experiments':tabs[index];$(tabs[index]+'Tab').focus();
 };
 const mobileNavigation=matchMedia('(max-width:640px)');
 const orientNavigation=()=>document.querySelector('.tabs').setAttribute('aria-orientation',mobileNavigation.matches?'horizontal':'vertical');
 mobileNavigation.addEventListener('change',orientNavigation);orientNavigation();
-if(activeWorkflow&&(!location.hash||location.hash==='#work'))history.replaceState(null,'',location.pathname+location.search+'#flows');
+if((activeExperiment||activeWorkflow)&&(!location.hash||location.hash==='#work'))history.replaceState(null,'',location.pathname+location.search+(activeExperiment?'#experiments':'#flows'));
 window.addEventListener('hashchange',showTab);showTab();connect();
 setInterval(()=>{if(!document.hidden&&$('kafkaPanel').hidden)refresh();},3000);
 setInterval(()=>{if(!document.hidden&&!$('kafkaPanel').hidden)refreshKafka();},10000);

@@ -3,6 +3,8 @@ const names={QUEUED:'대기',RUNNING:'처리 중',DELIVERING:'전달 중',SUCCEE
 let selected=null,busy=false,submitting=false;
 let activeBatch=new URLSearchParams(location.search).get('batch')||'';
 let activeWorkflow=new URLSearchParams(location.search).get('flow')||'';
+let activeExperiment=new URLSearchParams(location.search).get('experiment')||'';
+const expandedExperimentDetails=new Set();
 const expandedWorkflowSteps=new Set();
 let runtime={maxBatchSize:50,maxBatchCharacters:256000};
 let jev={mode:'OFF',configured:false,available:false},evaluationSubmitting=false;
@@ -163,6 +165,7 @@ async function refresh(){
     }
     if(selected){const current=tasks.find(t=>t.taskId===selected);if(current)show(current);else{const id=selected;const task=await api('/api/tasks/'+id);if(selected===id&&key===$('apiKey').value)show(task);}}
     await refreshWorkflows();
+    if(!$('experimentPanel').hidden)await refreshExperiments();
   }catch(e){connection(false);notice(e.message,true);}finally{busy=false;if(batchId!==activeBatch||key!==$('apiKey').value||status!==$('filter').value)queueMicrotask(refresh);}
 }
 async function connect(){
@@ -177,20 +180,22 @@ async function connect(){
 }
 function inputPrompts(){return $('requestMode').value==='batch'?$('prompt').value.split(/^\s*---\s*$/m).map(p=>p.trim()):[$('prompt').value.trim()];}
 function validateInput(){
-  const prompts=inputPrompts(),batch=$('requestMode').value==='batch',workflow=$('requestMode').value==='workflow';let error='';
+  const prompts=inputPrompts(),batch=$('requestMode').value==='batch',workflow=$('requestMode').value==='workflow',experiment=$('requestMode').value==='experiment';let error='';
   if(prompts.length>runtime.maxBatchSize)error=`최대 ${runtime.maxBatchSize}개까지 접수할 수 있습니다.`;
   else if(prompts.some(p=>!p))error=batch?'구분선 사이에 비어 있는 요청이 있습니다.':'요청 내용을 입력해 주세요.';
   else if(prompts.some(p=>p.length>32000))error='각 요청은 32,000자 이하여야 합니다.';
   else if(prompts.reduce((sum,p)=>sum+p.length,0)>runtime.maxBatchCharacters)error='전체 요청은 256,000자 이하여야 합니다.';
-  if(workflow&&prompts[0].length>8000)error='협업 요청은 8,000자 이하여야 합니다.';
+  if((workflow||experiment)&&prompts[0].length>8000)error='협업·비교 요청은 8,000자 이하여야 합니다.';
   if(workflow&&$('useDraft').checked&&(!$('initialDraft').value.trim()||$('initialDraft').value.length>8000))error='기존 초안을 1~8,000자로 입력해 주세요.';
+  if(experiment&&(!$('experimentDraft').value.trim()||$('experimentDraft').value.length>8000))error='비교할 초안을 1~8,000자로 입력해 주세요.';
+  if(experiment&&$('expectedOutput').value.length>8000)error='기대 답변은 8,000자 이하여야 합니다.';
   $('inputCount').textContent=$('prompt').value?(error||(batch?`${prompts.length}개 요청`:`${prompts[0].length.toLocaleString()}자`)):'';
   $('inputCount').className=error&&$('prompt').value?'invalid':'';$('submit').disabled=submitting||!!error;
-  $('submit').textContent=submitting?'접수 중…':batch?`${prompts.length}개 실행`:workflow?'협업 시작':'실행';return {prompts,error};
+  $('submit').textContent=submitting?'접수 중…':batch?`${prompts.length}개 실행`:workflow?'협업 시작':experiment?'비교 시작':'실행';return {prompts,error};
 }
 $('requestMode').onchange=()=>{
-  const batch=$('requestMode').value==='batch',workflow=$('requestMode').value==='workflow';$('sampleBatch').hidden=!batch;$('prompt').maxLength=batch?257000:workflow?8000:32000;$('workflowOptions').hidden=!workflow;
-  $('inputHelp').textContent=batch?'--- 줄로 구분 · 최대 50개':workflow?'최대 8,000자':'최대 32,000자';
+  const batch=$('requestMode').value==='batch',workflow=$('requestMode').value==='workflow',experiment=$('requestMode').value==='experiment';$('sampleBatch').hidden=!batch;$('prompt').maxLength=batch?257000:workflow||experiment?8000:32000;$('workflowOptions').hidden=!workflow;$('experimentOptions').hidden=!experiment;
+  $('inputHelp').textContent=batch?'--- 줄로 구분 · 최대 50개':workflow||experiment?'최대 8,000자':'최대 32,000자';
   $('prompt').placeholder=batch?'첫 번째 요청\n---\n두 번째 요청\n---\n세 번째 요청':'무엇을 실행할까요?';validateInput();
 };
 $('sampleBatch').onclick=()=>{
@@ -210,11 +215,16 @@ $('sampleBatch').onclick=()=>{
 $('prompt').oninput=validateInput;
 $('useDraft').onchange=()=>{$('initialDraft').hidden=!$('useDraft').checked;validateInput();};
 $('initialDraft').oninput=validateInput;
+$('experimentDraft').oninput=validateInput;$('expectedOutput').oninput=validateInput;
 $('requestForm').onsubmit=async event=>{
   event.preventDefault();if(submitting)return;const {prompts,error}=validateInput();if(error){notice(error,true);return;}
-  const batch=$('requestMode').value==='batch',workflow=$('requestMode').value==='workflow';submitting=true;$('composeError').hidden=true;validateInput();
+  const batch=$('requestMode').value==='batch',workflow=$('requestMode').value==='workflow',experiment=$('requestMode').value==='experiment';submitting=true;$('composeError').hidden=true;validateInput();
   try{
     const targetNode=$('node').value||null;
+    if(experiment){
+      const accepted=await api('/api/experiments',{method:'POST',body:JSON.stringify({prompt:prompts[0],targetNode,initialDraft:$('experimentDraft').value.trim(),expectedOutput:$('expectedOutput').value.trim()||null})});
+      chooseExperiment(accepted.experimentId);$('composeDialog').close();location.hash='experiments';notice('같은 초안으로 비교를 시작했습니다.');await refresh();return;
+    }
     if(workflow){
       const accepted=await api('/api/workflows',{method:'POST',body:JSON.stringify({prompt:prompts[0],targetNode,initialDraft:$('useDraft').checked?$('initialDraft').value.trim():null})});
       chooseWorkflow(accepted.workflowId);selected=accepted.steps[0].task.taskId;$('composeDialog').close();location.hash='flows';notice('협업을 시작했습니다.');await refresh();return;
@@ -229,12 +239,62 @@ $('requestForm').onsubmit=async event=>{
 $('accessForm').onsubmit=async event=>{event.preventDefault();$('connect').disabled=true;$('accessError').hidden=true;try{if(await connect()){$('accessDialog').close();notice('연결되었습니다.');}}finally{$('connect').disabled=false;}};
 $('openAccess').onclick=()=>{$('accessError').hidden=true;$('accessDialog').showModal();};
 $('newRun').onclick=()=>{
-  if(!$('prompt').value){$('requestMode').value=location.hash==='#flows'?'workflow':'single';$('requestMode').onchange();}
+  if(!$('prompt').value){$('requestMode').value=location.hash==='#flows'?'workflow':location.hash==='#experiments'?'experiment':'single';$('requestMode').onchange();}
   $('composeError').hidden=true;$('composeDialog').showModal();$('prompt').focus();
 };
 for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>$(button.dataset.close).close();
 $('requestForm').addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'&&!$('submit').disabled){event.preventDefault();$('requestForm').requestSubmit();}});
 $('filter').onchange=refresh;$('batchFilter').onchange=()=>chooseBatch($('batchFilter').value);validateInput();
+
+function chooseExperiment(id){
+  activeExperiment=id;const url=new URL(location);if(id)url.searchParams.set('experiment',id);else url.searchParams.delete('experiment');history.replaceState(null,'',url);
+}
+$('experimentPicker').onchange=()=>{chooseExperiment($('experimentPicker').value);refreshExperiments();};
+async function refreshExperiments(){
+  const key=$('apiKey').value;let id=activeExperiment;
+  const items=await api('/api/experiments?limit=10');
+  if(key!==$('apiKey').value||id!==activeExperiment)return;
+  if(!id&&items.length){chooseExperiment(items[0].experimentId);id=activeExperiment;}
+  const picker=$('experimentPicker');picker.replaceChildren(new Option('최근 비교 선택',''));
+  for(const item of items)picker.add(new Option(`${names[item.status]} · ${item.prompt.slice(0,35)}`,item.experimentId));
+  if(id&&!items.some(item=>item.experimentId===id))picker.add(new Option('선택한 비교',id));picker.value=id;
+  const box=$('experimentDetail');
+  if(!id){box.replaceChildren(element('div','같은 초안으로 두 경로를 비교합니다. 새 실행에서 시작하세요.','empty-state'));return;}
+  const experiment=items.find(item=>item.experimentId===id)||await api('/api/experiments/'+id);
+  if(key!==$('apiKey').value||id!==activeExperiment)return;
+  box.replaceChildren(element('p',experiment.prompt,'workflow-prompt'));
+  const metrics=element('div','','workflow-metrics');
+  metrics.append(element('span',names[experiment.status],'badge '+experiment.status),element('span','동일 요청 · 동일 초안'));
+  const link=element('a','고유 링크 ↗');link.href='/?experiment='+encodeURIComponent(id)+'#experiments';metrics.append(link);box.append(metrics);
+  const inputs=element('div','','experiment-inputs');
+  for(const [label,value] of [['공통 초안',experiment.initialDraft],['기대 답변',experiment.expectedOutput]]){
+    const input=element('div','');input.append(element('h3',label),element('pre',value??'미지정 · 채점 없이 비교'));inputs.append(input);
+  }
+  box.append(inputs);
+  const columns=element('div','','experiment-arms');box.append(columns);
+  for(const [kind,label] of [['direct','바로 재작성'],['review','검토 후 수정']]){
+    const arm=experiment[kind],flow=arm.workflow,card=element('div','','workflow-step');card.dataset.arm=kind;
+    const last=flow.steps.at(-1).task;
+    card.append(element('h3',label),element('span',names[flow.status],'badge '+flow.status));
+    const score=arm.matchesExpected;
+    const scoreLabel=score===true?'기대 답변 일치':score===false?'기대 답변 불일치':!experiment.expectedOutput?'미채점':flow.status==='FAILED'?'실행 실패 · 미채점':'채점 대기';
+    card.append(element('span',scoreLabel,'badge experiment-score'+(score===true?' eval-PASS':score===false?' eval-REJECT':'')));
+    card.append(element('small',`${flow.inferenceCalls}회 실행 · 추론 ${duration(0,flow.inferenceMillis)} · 전체 ${duration(0,arm.elapsedMillis)}`,'muted'));
+    if(score!==null)card.append(element('p',`초안 ${experiment.draftMatchesExpected?'일치':'불일치'} → 수정본 ${score?'일치':'불일치'}`,'muted'));
+    card.append(element('pre',arm.output??'결과 대기 중…'));
+    const review=flow.steps.find(step=>step.stage==='REVIEW');
+    if(review?.task.output){const details=disclosure(id,expandedExperimentDetails,'검토 의견');details.append(element('pre',review.task.output));card.append(details);}
+    const models=[...new Set(flow.steps.filter(step=>!step.provided).map(step=>step.model))];
+    card.append(element('small',`${models.join(', ')||flow.model} · ${flow.targetNode||'자동 배정'}`,'muted'));
+    const detail=element('a','단계 상세 ↗');detail.href='/?flow='+encodeURIComponent(flow.workflowId)+'#flows';detail.className='experiment-detail-link';card.append(detail);
+    if(flow.status==='FAILED'){
+      card.append(element('p',last.failureStage==='DELIVERY'?'전달 실패 · 결과 저장됨':'모델 실행 실패','error-message'));
+      const retry=element('button','이 경로 다시 시도','secondary');retry.onclick=async()=>{retry.disabled=true;try{await api('/api/workflows/'+flow.workflowId+'/retry',{method:'POST'});await refreshExperiments();}catch(e){notice(e.message,true);retry.disabled=false;}};card.append(retry);
+    }
+    columns.append(card);
+  }
+  box.append(element('p','일치는 기대 답변과의 문자열 비교입니다. 전체 시간에는 두 경로의 큐 대기와 전달이 포함됩니다.','experiment-note'));
+}
 
 function chooseWorkflow(id){
   activeWorkflow=id;const url=new URL(location);if(id)url.searchParams.set('flow',id);else url.searchParams.delete('flow');history.replaceState(null,'',url);
@@ -258,8 +318,11 @@ async function refreshWorkflows(){
   const metrics=element('div','','workflow-metrics');const state=element('span',names[workflow.status],'badge '+workflow.status);state.title='절차의 실행 상태 · 답변 품질 판정과 별개';
   metrics.append(state,element('span',workflow.model),element('span',`모델 실행 시도 ${workflow.inferenceCalls}회`),element('span',`추론 ${duration(0,workflow.inferenceMillis)}`),element('span',`전체 ${duration(workflow.createdAt,end)}`));
   const link=element('a','고유 링크 ↗');link.href='/?flow='+encodeURIComponent(id)+'#flows';metrics.append(link);box.append(metrics);
-  const columns=element('div','','workflow-steps');box.append(columns);
-  for(const [stage,label] of [['DRAFT','1. 초안'],['REVIEW','2. 검토 의견'],['REVISION','3. 수정본']]){
+  const direct=workflow.mode==='DIRECT';
+  $('workflowSection').querySelector('h2').textContent=direct?'초안 → 바로 재작성':'작성 → 검토 → 수정';
+  const columns=element('div','','workflow-steps'+(direct?' direct':''));box.append(columns);
+  const stages=direct?[['DRAFT','1. 초안'],['REVISION','2. 바로 재작성']]:[['DRAFT','1. 초안'],['REVIEW','2. 검토 의견'],['REVISION','3. 수정본']];
+  for(const [stage,label] of stages){
     const card=element('div','','workflow-step');card.dataset.stage=stage;card.append(element('h3',label));columns.append(card);
     const step=workflow.steps.find(s=>s.stage===stage);
     if(!step){card.append(element('p','앞 단계 완료 후 시작합니다.','muted'));continue;}
