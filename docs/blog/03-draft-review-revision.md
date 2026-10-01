@@ -108,3 +108,7 @@ Coral의 대화는 메모리에 있다. 진행 중 서버가 재시작되면 DB�
 작성 기준: 2026년 9월 30일. 실제 로컬 실행 기록과 원격 저장소의 구현·검증 결과를 기준으로 작성했다.
 
 이전 글: [AI 자동화 프로젝트 2: 작업은 성공했는데 답은 틀렸다](https://kdkrkwhr.github.io/ai/2026/09/29/event-driven-llm-jev-shadow.html)
+
+----
+
+다음 글: [AI 자동화 프로젝트 4: 검토는 추가 호출 한 번의 값을 할까](https://kdkrkwhr.github.io/ai/2026/10/01/event-driven-llm-review-effect-comparison.html)
