@@ -19,7 +19,10 @@
 !/docs/blog/02-kafka-llm-jev.md
 !/docs/blog/03-draft-review-revision.md
 !/docs/blog/04-review-effect-comparison.md
+!/docs/blog/05-codex-cli.md
 !/docs/blog/images/03-workflow-comparison.png
+!/docs/blog/images/05-codex-comparison.png
+!/docs/blog/images/05-codex-workflow.png
 
 # Build and container definitions.
 !/build.gradle

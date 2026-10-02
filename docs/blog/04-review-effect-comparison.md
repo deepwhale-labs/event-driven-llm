@@ -97,3 +97,7 @@ Jev 실제 연동과 평가 결과에 따른 자동 재생성·토픽 선택은 
 작성 기준: 2026년 10월 1일. 실제 로컬 실행 기록과 구현·검증 결과를 기준으로 작성했다.
 
 이전 글: [AI 자동화 프로젝트 3: 검토를 붙이면 답이 좋아질까](https://kdkrkwhr.github.io/ai/2026/09/30/event-driven-llm-review-workflow.html)
+
+----
+
+다음 글: [AI 자동화 프로젝트 5: 로컬 모델 대신 Codex CLI를 붙여 봤다](https://kdkrkwhr.github.io/ai/2026/10/02/event-driven-llm-codex-cli.html)
