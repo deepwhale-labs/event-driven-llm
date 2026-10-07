@@ -318,6 +318,9 @@ flowchart TD
 ```powershell
 # 오류 초안 3개·정상 초안 2개를 각각 3회 비교 (정상 경로 총 45회 추론)
 .\scripts\compare.ps1 -Repetitions 3
+
+# 이전 결과를 보존하면서 별도 실험 폴더에 저장 (기존 결과 파일이 있으면 중단)
+.\scripts\compare.ps1 -Repetitions 3 -OutputDirectory build/experiments/codex-review
 ```
 
 스크립트는 한 노드를 지정해 실행하며, 생략하면 등록된 첫 노드를 사용합니다. `-TargetNode`, `-BaseUrl`, `-ApiKey`로 대상을 바꿀 수 있습니다. 개별 기록은 `build/comparison-live-result.json`, 일치·오류 수정·정상 유지·호출 수 집계는 `build/comparison-live-summary.json`에 저장합니다. 정상 초안이 불일치로 바뀐 사례도 집계에서 빠지지 않습니다.

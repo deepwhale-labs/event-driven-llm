@@ -20,9 +20,13 @@
 !/docs/blog/03-draft-review-revision.md
 !/docs/blog/04-review-effect-comparison.md
 !/docs/blog/05-codex-cli.md
+!/docs/blog/06-codex-review-comparison.md
 !/docs/blog/images/03-workflow-comparison.png
 !/docs/blog/images/05-codex-comparison.png
 !/docs/blog/images/05-codex-workflow.png
+!/docs/blog/images/06-codex-error-review.png
+!/docs/blog/images/06-codex-correct-review.png
+!/docs/experiments/2026-10-07-codex-review.json
 
 # Build and container definitions.
 !/build.gradle

@@ -306,6 +306,9 @@ This comparison screenshot was captured from the local Docker app on 2026-10-01.
 ```powershell
 # Three incorrect drafts and two correct controls, each repeated three times (45 normal-path inference calls)
 .\scripts\compare.ps1 -Repetitions 3
+
+# Preserve earlier results in a separate experiment folder (refuses existing result files)
+.\scripts\compare.ps1 -Repetitions 3 -OutputDirectory build/experiments/codex-review
 ```
 
 The script pins requests to one worker, defaulting to the first configured node. Override it with `-TargetNode`; `-BaseUrl` and `-ApiKey` are also supported. Individual records go to `build/comparison-live-result.json`; exact-match, correction, preservation, execution-count and timing totals go to `build/comparison-live-summary.json`. Correct drafts that become mismatches remain in the denominator.

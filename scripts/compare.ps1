@@ -3,7 +3,8 @@
     [string]$ApiKey = '',
     [string]$TargetNode = '',
     [ValidateRange(1,10)][int]$Repetitions = 3,
-    [int]$TimeoutSeconds = 600
+    [int]$TimeoutSeconds = 600,
+    [string]$OutputDirectory = ''
 )
 $ErrorActionPreference = 'Stop'
 $headers = @{}
@@ -27,9 +28,13 @@ $cases = @(
     @{ name='correct-refund'; prompt='다음 문의를 배송, 환불, 상품 중 정확히 한 단어로 분류하세요: 구매를 취소하고 돈을 돌려받고 싶습니다.'; draft='환불'; expected='환불' }
 )
 $records = @()
-$directory = Join-Path $PSScriptRoot '../build'
+$directory = if ($OutputDirectory) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory) } else { Join-Path $PSScriptRoot '../build' }
 New-Item -ItemType Directory -Path $directory -Force | Out-Null
 $outputPath = Join-Path $directory 'comparison-live-result.json'
+$summaryPath = Join-Path $directory 'comparison-live-summary.json'
+if ($OutputDirectory -and ((Test-Path -LiteralPath $outputPath) -or (Test-Path -LiteralPath $summaryPath))) {
+    throw 'Comparison files already exist in OutputDirectory. Choose a new directory to preserve previous results.'
+}
 function Save-Comparisons {
     @{ runtime=$runtime; targetNode=$TargetNode; repetitions=$Repetitions; capturedAt=(Get-Date).ToUniversalTime().ToString('o'); cases=$records } |
         ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $outputPath -Encoding utf8
@@ -76,5 +81,5 @@ $summary = foreach ($arm in @('direct','review')) {
     }
 }
 $summary | Format-Table -AutoSize
-$summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'comparison-live-summary.json') -Encoding utf8
+$summary | ConvertTo-Json | Set-Content -LiteralPath $summaryPath -Encoding utf8
 Write-Output "Saved to $outputPath. Exact-match observations, not a general accuracy or latency benchmark."

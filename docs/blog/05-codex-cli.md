@@ -129,3 +129,7 @@ Windows에서 Python 3.11 이상, Docker Desktop, 로그인된 Codex CLI를 준�
 작성 기준: 2026년 10월 2일. 모델 실행 결과는 10월 1일의 실제 기록이며, 비교 화면은 저장된 결과를 다시 열어 캡처했다.
 
 이전 글: [AI 자동화 프로젝트 4: 검토는 추가 호출 한 번의 값을 할까](https://kdkrkwhr.github.io/ai/2026/10/01/event-driven-llm-review-effect-comparison.html)
+
+----
+
+다음 글: [AI 자동화 프로젝트 6: Codex로 바꾼 뒤에도 검토는 필요할까](https://kdkrkwhr.github.io/ai/2026/10/07/event-driven-llm-codex-review-comparison.html)
